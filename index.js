@@ -1,41 +1,37 @@
-import { Client, GatewayIntentBits } from "discord.js";
-import express from "express";
-
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-// tiny server so Railway keeps it alive
-app.get("/", (req, res) => {
-  res.send("Bot is alive");
-});
-
-app.listen(PORT, () => {
-  console.log(`HTTP server running on port ${PORT}`);
-});
+import { Client, GatewayIntentBits, PermissionsBitField } from "discord.js";
 
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
 client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-client.on("messageCreate", (message) => {
+client.on("messageCreate", async (message) => {
+  // Ignore bots
   if (message.author.bot) return;
 
-  if (message.content.toLowerCase().includes("hello")) {
-    message.reply("Hey 👋 I’m online.");
-  }
-});
+  const channelName = message.channel.name || "";
+  const isTicketChannel = channelName.startsWith("tickets-");
+  const isMentioned = message.mentions.has(client.user);
 
-if (!process.env.DISCORD_TOKEN) {
-  console.error("DISCORD_TOKEN missing");
-  process.exit(1);
-}
+  // Ignore everything else
+  if (!isTicketChannel && !isMentioned) return;
+
+  // Remove bot mention from content if present
+  const cleanContent = message.content
+    .replace(`<@${client.user.id}>`, "")
+    .trim();
+
+  // Temporary response (no AI yet)
+  await message.reply(
+    "Got it 👍 I can help with this.\nCan you explain a bit more about what you’re trying to do?"
+  );
+});
 
 client.login(process.env.DISCORD_TOKEN);

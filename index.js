@@ -1,7 +1,7 @@
-const { Client, GatewayIntentBits } = require("discord.js");
-const express = require("express");
+import { Client, GatewayIntentBits } from "discord.js";
+import express from "express";
 
-// ---- HTTP SERVER (REQUIRED FOR RENDER) ----
+// ---- HTTP SERVER (RENDER NEEDS THIS) ----
 const app = express();
 const PORT = process.env.PORT || 10000;
 
@@ -13,14 +13,14 @@ app.listen(PORT, () => {
   console.log(`HTTP server listening on port ${PORT}`);
 });
 
-// ---- DISCORD BOT ----
+// ---- DISCORD CLIENT ----
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildPresences
+    GatewayIntentBits.GuildPresences,
   ],
 });
 
@@ -36,9 +36,9 @@ client.on("messageCreate", (message) => {
   }
 });
 
-// ---- LOGIN ----
 console.log("TOKEN FOUND:", process.env.DISCORD_TOKEN ? "YES" : "NO");
 
-client.login(process.env.DISCORD_TOKEN)
+client
+  .login(process.env.DISCORD_TOKEN)
   .then(() => console.log("🚀 Discord login successful"))
-  .catch(err => console.error("❌ Discord login failed:", err));
+  .catch((err) => console.error("❌ Discord login failed:", err));

@@ -1,13 +1,12 @@
 {
-  "name": "ai-discord-bot",
+  "name": "sm-hackers-bot",
   "version": "1.0.0",
   "type": "module",
-  "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.14.1",
-    "express": "^4.19.2"
+    "node-fetch": "^3.3.2"
   }
 }

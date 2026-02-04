@@ -1,60 +1,41 @@
-import express from "express";
 import { Client, GatewayIntentBits } from "discord.js";
+import express from "express";
 
 const app = express();
-const PORT = process.env.PORT || 10000;
+const PORT = process.env.PORT || 3000;
 
+// tiny server so Railway keeps it alive
 app.get("/", (req, res) => {
-  res.send("Bot running");
+  res.send("Bot is alive");
 });
 
 app.listen(PORT, () => {
-  console.log(`HTTP server listening on port ${PORT}`);
+  console.log(`HTTP server running on port ${PORT}`);
 });
 
-// ---- Discord client ----
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-  ],
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-// HARD LOGGING (this is what you were missing)
-client.on("ready", () => {
-  console.log(`✅ Logged in as ${client.user.tag}`);
+client.once("ready", () => {
+  console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on("error", (err) => {
-  console.error("❌ Discord client error:", err);
+client.on("messageCreate", (message) => {
+  if (message.author.bot) return;
+
+  if (message.content.toLowerCase().includes("hello")) {
+    message.reply("Hey 👋 I’m online.");
+  }
 });
 
-client.on("shardError", (err) => {
-  console.error("❌ Shard error:", err);
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.error("❌ Unhandled rejection:", reason);
-});
-
-process.on("uncaughtException", (err) => {
-  console.error("❌ Uncaught exception:", err);
-});
-
-// ---- Login ----
-const token = process.env.DISCORD_TOKEN;
-
-if (!token) {
-  console.error("❌ DISCORD_TOKEN missing");
+if (!process.env.DISCORD_TOKEN) {
+  console.error("DISCORD_TOKEN missing");
   process.exit(1);
 }
 
-console.log("TOKEN FOUND: YES");
-
-try {
-  await client.login(token);
-  console.log("🚀 client.login() resolved");
-} catch (err) {
-  console.error("❌ client.login() failed:", err);
-}
+client.login(process.env.DISCORD_TOKEN);

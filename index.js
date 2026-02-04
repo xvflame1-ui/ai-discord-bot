@@ -1,5 +1,21 @@
 import { Client, GatewayIntentBits } from "discord.js";
+import http from "http";
 
+// ===============================
+// 🟢 Fake HTTP server for Render
+// ===============================
+const PORT = process.env.PORT || 3000;
+
+http.createServer((req, res) => {
+  res.writeHead(200, { "Content-Type": "text/plain" });
+  res.end("Bot is running 👍");
+}).listen(PORT, () => {
+  console.log(`🌐 HTTP server listening on port ${PORT}`);
+});
+
+// ===============================
+// 🤖 Discord Bot
+// ===============================
 console.log("Starting bot…");
 
 const client = new Client({
@@ -10,18 +26,12 @@ const client = new Client({
   ],
 });
 
-// 🔴 LOG ALL ERRORS (IMPORTANT)
-client.on("error", (err) => {
-  console.error("CLIENT ERROR:", err);
-});
-
-client.on("shardError", (error) => {
-  console.error("SHARD ERROR:", error);
-});
-
-process.on("unhandledRejection", (reason) => {
-  console.error("UNHANDLED PROMISE:", reason);
-});
+// Error visibility (keep this)
+client.on("error", (err) => console.error("CLIENT ERROR:", err));
+client.on("shardError", (err) => console.error("SHARD ERROR:", err));
+process.on("unhandledRejection", (err) =>
+  console.error("UNHANDLED PROMISE:", err)
+);
 
 client.once("ready", () => {
   console.log(`🤖 Logged in as ${client.user.tag}`);
@@ -34,9 +44,9 @@ client.on("messageCreate", (message) => {
   }
 });
 
-// 🔴 EXPLICIT LOGIN LOG
 console.log("Attempting Discord login…");
 
-client.login(process.env.DISCORD_TOKEN)
+client
+  .login(process.env.DISCORD_TOKEN)
   .then(() => console.log("Login promise resolved"))
   .catch((err) => console.error("LOGIN FAILED:", err));

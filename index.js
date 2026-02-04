@@ -1,52 +1,44 @@
-import { Client, GatewayIntentBits } from "discord.js";
-import http from "http";
+const { Client, GatewayIntentBits } = require("discord.js");
+const express = require("express");
 
-// ===============================
-// 🟢 Fake HTTP server for Render
-// ===============================
-const PORT = process.env.PORT || 3000;
+// ---- HTTP SERVER (REQUIRED FOR RENDER) ----
+const app = express();
+const PORT = process.env.PORT || 10000;
 
-http.createServer((req, res) => {
-  res.writeHead(200, { "Content-Type": "text/plain" });
-  res.end("Bot is running 👍");
-}).listen(PORT, () => {
-  console.log(`🌐 HTTP server listening on port ${PORT}`);
+app.get("/", (req, res) => {
+  res.send("Bot is running");
 });
 
-// ===============================
-// 🤖 Discord Bot
-// ===============================
-console.log("Starting bot…");
+app.listen(PORT, () => {
+  console.log(`HTTP server listening on port ${PORT}`);
+});
 
+// ---- DISCORD BOT ----
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildPresences
   ],
 });
 
-// Error visibility (keep this)
-client.on("error", (err) => console.error("CLIENT ERROR:", err));
-client.on("shardError", (err) => console.error("SHARD ERROR:", err));
-process.on("unhandledRejection", (err) =>
-  console.error("UNHANDLED PROMISE:", err)
-);
-
 client.once("ready", () => {
-  console.log(`🤖 Logged in as ${client.user.tag}`);
+  console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
 client.on("messageCreate", (message) => {
   if (message.author.bot) return;
-  if (message.content.toLowerCase() === "hi bot") {
-    message.reply("Hey 👋 I’m alive!");
+
+  if (message.content.toLowerCase() === "ping") {
+    message.reply("pong 🏓");
   }
 });
 
-console.log("Attempting Discord login…");
+// ---- LOGIN ----
+console.log("TOKEN FOUND:", process.env.DISCORD_TOKEN ? "YES" : "NO");
 
-client
-  .login(process.env.DISCORD_TOKEN)
-  .then(() => console.log("Login promise resolved"))
-  .catch((err) => console.error("LOGIN FAILED:", err));
+client.login(process.env.DISCORD_TOKEN)
+  .then(() => console.log("🚀 Discord login successful"))
+  .catch(err => console.error("❌ Discord login failed:", err));

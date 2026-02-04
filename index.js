@@ -1,10 +1,10 @@
-import { Client, GatewayIntentBits } from "discord.js";
 import express from "express";
+import { Client, GatewayIntentBits } from "discord.js";
 
-// ---- HTTP SERVER (RENDER NEEDS THIS) ----
 const app = express();
 const PORT = process.env.PORT || 10000;
 
+// --- Keep Render alive ---
 app.get("/", (req, res) => {
   res.send("Bot is running");
 });
@@ -13,14 +13,12 @@ app.listen(PORT, () => {
   console.log(`HTTP server listening on port ${PORT}`);
 });
 
-// ---- DISCORD CLIENT ----
+// --- Discord client ---
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.GuildPresences,
   ],
 });
 
@@ -28,17 +26,13 @@ client.once("ready", () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
 });
 
-client.on("messageCreate", (message) => {
-  if (message.author.bot) return;
+// --- Login ---
+const token = process.env.DISCORD_TOKEN;
 
-  if (message.content.toLowerCase() === "ping") {
-    message.reply("pong 🏓");
-  }
-});
+if (!token) {
+  console.error("❌ DISCORD_TOKEN not found");
+  process.exit(1);
+}
 
-console.log("TOKEN FOUND:", process.env.DISCORD_TOKEN ? "YES" : "NO");
-
-client
-  .login(process.env.DISCORD_TOKEN)
-  .then(() => console.log("🚀 Discord login successful"))
-  .catch((err) => console.error("❌ Discord login failed:", err));
+console.log("TOKEN FOUND: YES");
+client.login(token);

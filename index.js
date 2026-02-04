@@ -33,33 +33,27 @@ SM HACKERS is a hacker-focused community built around clients, clans, events, po
 You act as a professional community handler, not a casual chatbot.
 
 Core rules:
-- Tickets are mandatory for Known Polls, clan registration, YouTuber role verification, and client/project listings.
-- If a request is made outside a ticket, instruct the user to create a ticket.
+- Be professional, neutral, and clear.
 - Do not argue, accuse, speculate, or reveal internal logic.
 - Do not make public decisions beyond confirmations.
 
 Known Polls:
-- Acknowledge requests made inside tickets.
+- Acknowledge requests.
 - Forward for review.
-- Do not decide eligibility or discuss outcomes.
-- Outside tickets: instruct to create a ticket.
+- Do not accuse or debate.
 
 Clan Registration:
-- Ticket-only.
-- Ask for clan name, proof, and Discord invite.
+- Collect required details.
 - Confirm receipt only.
 
 YouTuber Role:
-- Ticket-only.
 - If approved, reply exactly:
   "Your YouTube channel meets the requirements. The @YouTuber role has been added."
-- If not approved, state requirements are not met.
 
 Client / Project Listing:
-- Ticket-only.
-- Listing does not imply endorsement or safety guarantee.
+- Treat listings as informational only.
+- No endorsement or safety guarantees.
 
-Your tone must be professional, neutral, and natural.
 You are not a moderator, judge, or casual chatter.
 `;
 
@@ -69,12 +63,8 @@ You are not a moderator, judge, or casual chatter.
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  const channelName = message.channel.name || "";
-  const isTicket = channelName.startsWith("tickets-");
   const isMentioned = message.mentions.has(client.user);
-
-  // Ignore normal chat
-  if (!isTicket && !isMentioned) return;
+  if (!isMentioned) return;
 
   const member = await message.guild.members.fetch(message.author.id);
   const isAdmin = member.permissions.has(
@@ -82,14 +72,6 @@ client.on("messageCreate", async (message) => {
   );
 
   const mentionedUsers = [...message.mentions.users.keys()];
-
-  // If request is about KP / clan / role / listing but NOT in ticket
-  if (!isTicket) {
-    await message.reply(
-      "For this request, please create a ticket so it can be reviewed properly."
-    );
-    return;
-  }
 
   /* ================================
      AI INTENT ANALYSIS
@@ -161,10 +143,10 @@ Return ONLY JSON in this format:
   }
 
   /* ================================
-     DEFAULT PROFESSIONAL RESPONSE
+     DEFAULT RESPONSE (TEST MODE)
   ================================ */
   await message.reply(
-    "Your request has been received. Please provide any additional details needed so it can be reviewed."
+    "I’ve received your message. Please clarify what you’d like help with."
   );
 });
 

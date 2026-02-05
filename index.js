@@ -27,28 +27,48 @@ const client = new Client({
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
+/* =======================
+   CONSTANTS
+======================= */
 const BOT_NAME = 'SMH Manager';
 const TICKET_CHANNEL_PREFIX = 'ticket-';
 const TICKET_CREATE_CHANNEL = '#🎟️tickets';
 
 /* =======================
-   TOOLBOX / CLIENT CHANNELS
+   CLIENT / PROXY CHANNEL IDS
 ======================= */
-const TOOLBOX_MAP = {
-  toolbox: ['#saber-proxy', '#lumina-client'],
-  saber: ['#saber-proxy'],
-  saberproxy: ['#saber-proxy'],
-  lumina: ['#lumina-client'],
-  metro: ['#metro-proxy'],
-  horion: ['#horion-client'],
-  lunar: ['#lunar-proxy'],
-  vortex: ['#vortex-client'],
-  boost: ['#boost-client'],
-  'w-client': ['#w-client']
+const CLIENT_CHANNELS = {
+  saber: ['<#1458751684032331787>'],
+  saberproxy: ['<#1458751684032331787>'],
+
+  metro: ['<#1458751743205707779>'],
+  metroproxy: ['<#1458751743205707779>'],
+
+  lumina: ['<#1458766462713073696>'],
+  luminaclient: ['<#1458766462713073696>'],
+
+  lumine: ['<#1458766504765165610>'],
+  lumineproxy: ['<#1458766504765165610>'],
+
+  wclient: ['<#1458766648608555029>'],
+
+  lunar: ['<#1458769266001182721>'],
+  lunarproxy: ['<#1458769266001182721>'],
+
+  horion: ['<#1458777115582533819>'],
+  horizon: ['<#1458777115582533819>'],
+
+  vortex: ['<#1458777244913897595>'],
+
+  boost: ['<#1459180134895583333>'],
+
+  toolbox: [
+    '<#1458751684032331787>, <#1458766462713073696>'
+  ]
 };
 
 /* =======================
-   TICKET-ONLY TOPICS
+   TICKET-ONLY REQUESTS
 ======================= */
 const TICKET_ONLY_KEYWORDS = [
   'known poll',
@@ -74,28 +94,30 @@ function containsKeyword(msg, list) {
   return list.some(k => msg.includes(k));
 }
 
-function detectToolbox(msg) {
-  for (const key of Object.keys(TOOLBOX_MAP)) {
+function detectClient(msg) {
+  for (const key of Object.keys(CLIENT_CHANNELS)) {
     if (msg.includes(key)) return key;
   }
   return null;
 }
 
 /* =======================
-   AI RESPONSE (FIXED MODEL)
+   AI RESPONSE
 ======================= */
 async function aiReply(prompt) {
   const completion = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
     temperature: 0.15,
-    max_tokens: 300,
+    max_tokens: 350,
     messages: [
       {
         role: 'system',
         content:
-          'You are SMH Manager, a professional Discord assistant for the SM HACKERS Minecraft hacking community. ' +
-          'Use professional, neutral English. No emojis. No friendliness. No assumptions. ' +
-          'Never invent rules. Never acknowledge tickets unless in ticket channels.'
+          'You are SMH Manager, the official Discord assistant for the SM HACKERS Minecraft hacking community. ' +
+          'Respond professionally, neutrally, and directly. ' +
+          'Do not be friendly. Do not use emojis. ' +
+          'Do not invent rules. Do not acknowledge tickets unless inside a ticket channel. ' +
+          'If a request requires a ticket, instruct the user to create one in #🎟️tickets.'
       },
       { role: 'user', content: prompt }
     ]
@@ -118,29 +140,29 @@ client.on('messageCreate', async message => {
 
   const channelName = message.channel.name;
 
-  /* ---- TOOLBOX HANDLING ---- */
-  const toolboxKey = detectToolbox(content);
-  if (toolboxKey) {
-    const channels = TOOLBOX_MAP[toolboxKey].join(', ');
+  /* ---- CLIENT / TOOLBOX HANDLING ---- */
+  const clientKey = detectClient(content);
+  if (clientKey) {
+    const channels = CLIENT_CHANNELS[clientKey].join(', ');
     return message.reply(
       `The requested resource is available in ${channels}.`
     );
   }
 
-  /* ---- TICKET-ONLY ENFORCEMENT ---- */
+  /* ---- TICKET ENFORCEMENT ---- */
   if (containsKeyword(content, TICKET_ONLY_KEYWORDS)) {
     if (!isTicketChannel(channelName)) {
       return message.reply(
-        `Please create a ticket in ${TICKET_CREATE_CHANNEL} to proceed with this request.`
+        `This request must be handled through a ticket. Please create one in ${TICKET_CREATE_CHANNEL}.`
       );
     }
 
     return message.reply(
-      'Your request has been received in this ticket. Please provide all required details for review.'
+      'Your request has been received in this ticket. Please provide the required details for review.'
     );
   }
 
-  /* ---- GENERAL AI RESPONSE ---- */
+  /* ---- GENERAL AI ---- */
   try {
     const response = await aiReply(content);
     return message.reply(response);

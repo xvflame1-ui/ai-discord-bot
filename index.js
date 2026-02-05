@@ -1,181 +1,141 @@
-import { Client, GatewayIntentBits } from "discord.js";
-import fetch from "node-fetch";
+import {
+  Client,
+  GatewayIntentBits,
+  SlashCommandBuilder,
+  REST,
+  Routes,
+  PermissionFlagsBits,
+  PollLayoutType
+} from "discord.js";
 
 /* ================================
    CONFIG
 ================================ */
-const GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions";
-const MODEL = "llama-3.1-8b-instant";
+const TOKEN = process.env.DISCORD_TOKEN;
+const CLIENT_ID = process.env.CLIENT_ID; // Discord Application ID
+const GUILD_ID = process.env.GUILD_ID;   // Optional (recommended for fast updates)
 
 /* ================================
-   DISCORD CLIENT
+   CLIENT
 ================================ */
 const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
-  ]
-});
-
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  intents: [GatewayIntentBits.Guilds]
 });
 
 /* ================================
-   SYSTEM PROMPT — SM HACKERS
+   SLASH COMMAND DEFINITION
 ================================ */
-const SYSTEM_PROMPT = `
-You are the official automated assistant of the SM HACKERS Discord server.
-
-SM HACKERS is a Minecraft-focused community built around anarchy and semi-anarchy servers such as LBSM, 2b2t, and similar environments.
-The community focuses on Minecraft clients, hacks, utilities, PvP tools, proxies, clans, tournaments, giveaways, Known Polls, and structured community events.
-
-You represent SM HACKERS staff communication standards.
-
-CORE IDENTITY:
-- You are a professional, neutral, staff-level assistant
-- You are not casual, friendly, playful, or conversational
-- You do not entertain or socialize
-- You provide clear guidance, requirements, and confirmations only
-- Do not use emojis, slang, jokes, or filler language
-
-LANGUAGE:
-- Respond primarily in professional English
-- If a user speaks another language, reply professionally in that language when possible
-- Maintain the same neutral tone in all languages
-
-WHEN TO RESPOND:
-- Respond only when mentioned
-- Respond inside ticket channels
-- Never DM users
-
-GENERAL RULES:
-- Do not argue, debate, accuse, speculate, or judge
-- Do not reveal internal moderation or review logic
-- Do not discuss votes, popularity, or outcomes
-- If staff review is required, state it and stop
-
-TOOLBOX / CLIENT / PROXY:
-- If a user asks about toolbox, tools, utilities, proxies, or clients:
-  Direct them to #saber-proxy and #lumina-client
-- If a specific proxy or client is mentioned:
-  Direct them to the relevant channel using a channel mention
-- Do not recommend, rank, endorse, or provide download links unless instructed
-
-KNOWN POLLS:
-- Known Polls requests are handled only through tickets
-- Instruct users to create a ticket
-- Acknowledge receipt
-- Forward for review
-- Do not confirm acceptance or rejection
-
-CLAN REGISTRATION:
-- Ticket-only
-- Minimum 6 active members
-- Dedicated Discord server
-- Clan name, proof, and invite required
-- Confirm receipt only
-
-YOUTUBER ROLE:
-- Ticket-only
-- Minimum 100 subscribers
-- Active Minecraft content
-- Proof of ownership required
-- If approved, reply exactly:
-  "Your YouTube channel meets the requirements. The @YouTuber role has been added."
-
-CLIENT / PROJECT LISTING:
-- Public release required
-- Accessible download link
-- Basic transparency required
-- Listing does not imply endorsement or safety
-
-CONFLICT HANDLING:
-- Remain neutral
-- Restate process
-- Redirect to tickets
-- End response cleanly
-
-You are an operational assistant, not a personality.
-Your goal is clarity, structure, and consistency.
-`;
-
-/* ================================
-   TOOLBOX DETECTION (LIGHT LOGIC)
-================================ */
-function isToolboxQuery(text) {
-  const t = text.toLowerCase();
-  return (
-    t.includes("toolbox") ||
-    t.includes("tools") ||
-    t.includes("proxy") ||
-    t.includes("client")
+const pollCommand = new SlashCommandBuilder()
+  .setName("poll")
+  .setDescription("Create official SM HACKERS polls")
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
+  .addSubcommand(sub =>
+    sub
+      .setName("create")
+      .setDescription("Create up to 10 official polls at once")
   );
+
+// Add repeated fields (Q1–Q10)
+for (let i = 1; i <= 10; i++) {
+  pollCommand.options[0]
+    .addStringOption(opt =>
+      opt
+        .setName(`question_${i}`)
+        .setDescription(`Poll question ${i}`)
+        .setRequired(i === 1)
+    )
+    .addStringOption(opt =>
+      opt
+        .setName(`options_${i}`)
+        .setDescription(`Options for poll ${i} (one per line, max 10)`)
+        .setRequired(i === 1)
+    );
 }
 
 /* ================================
-   MESSAGE HANDLER
+   REGISTER COMMAND
 ================================ */
-client.on("messageCreate", async (message) => {
-  if (message.author.bot) return;
+async function registerCommands() {
+  const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-  // Respond only when mentioned or inside tickets
-  const isMentioned = message.mentions.has(client.user);
-  const isTicket = message.channel.name?.startsWith("tickets-");
+  const commands = [pollCommand.toJSON()];
 
-  if (!isMentioned && !isTicket) return;
+  if (GUILD_ID) {
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
+    console.log("Slash command registered (guild).");
+  } else {
+    await rest.put(
+      Routes.applicationCommands(CLIENT_ID),
+      { body: commands }
+    );
+    console.log("Slash command registered (global).");
+  }
+}
 
-  // TOOLBOX SHORT-CIRCUIT (NO AI NEEDED)
-  if (isToolboxQuery(message.content)) {
-    await message.reply(
-      "For toolbox-related resources, please refer to #saber-proxy and #lumina-client."
+/* ================================
+   READY
+================================ */
+client.once("ready", async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+  await registerCommands();
+});
+
+/* ================================
+   INTERACTION HANDLER
+================================ */
+client.on("interactionCreate", async interaction => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== "poll") return;
+
+  if (interaction.options.getSubcommand() !== "create") return;
+
+  await interaction.deferReply({ ephemeral: true });
+
+  let created = 0;
+
+  for (let i = 1; i <= 10; i++) {
+    const question = interaction.options.getString(`question_${i}`);
+    const optionsRaw = interaction.options.getString(`options_${i}`);
+
+    if (!question || !optionsRaw) continue;
+
+    const options = optionsRaw
+      .split("\n")
+      .map(o => o.trim())
+      .filter(Boolean)
+      .slice(0, 10);
+
+    if (options.length < 2) continue;
+
+    await interaction.channel.send({
+      poll: {
+        question: { text: question },
+        answers: options.map(opt => ({ text: opt })),
+        allowMultiselect: false,
+        layoutType: PollLayoutType.Default,
+        duration: 24 * 60 * 60 // 24 hours
+      }
+    });
+
+    created++;
+  }
+
+  if (created === 0) {
+    await interaction.editReply(
+      "No valid polls were created. Ensure each poll has a question and at least two options."
     );
     return;
   }
 
-  try {
-    const res = await fetch(GROQ_API_URL, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${process.env.GROQ_API_KEY}`,
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model: MODEL,
-        temperature: 0.2,
-        max_tokens: 350,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: message.content }
-        ]
-      })
-    });
-
-    if (!res.ok) {
-      const err = await res.text();
-      console.error("Groq API error:", err);
-      await message.reply("There was an issue processing your request.");
-      return;
-    }
-
-    const data = await res.json();
-    const reply = data?.choices?.[0]?.message?.content?.trim();
-
-    if (!reply) {
-      await message.reply("Unable to generate a response.");
-      return;
-    }
-
-    await message.reply(reply);
-
-  } catch (err) {
-    console.error("AI error:", err);
-    await message.reply("There was an issue processing your request.");
-  }
+  await interaction.editReply(
+    `Successfully created ${created} official poll${created > 1 ? "s" : ""}.`
+  );
 });
 
 /* ================================
    LOGIN
 ================================ */
-client.login(process.env.DISCORD_TOKEN);
+client.login(TOKEN);

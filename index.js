@@ -1,200 +1,345 @@
-import 'dotenv/config';
-import fs from 'fs';
-import { Client, GatewayIntentBits } from 'discord.js';
-import Groq from 'groq-sdk';
+/******************************************************************************************
+ * SM HACKERS – Discord AI Manager
+ * -----------------------------------------------------------------------------
+ * This bot is NOT a generic chatbot.
+ * It is a rule-driven assistant with limited AI classification.
+ *
+ * Purpose:
+ *  - Handle Known Polls (KP)
+ *  - Handle Clan Registration
+ *  - Answer client/toolbox questions
+ *  - Behave correctly in tickets vs non-tickets
+ *  - Maintain professional, neutral tone
+ *
+ * NEVER:
+ *  - Approves anything publicly
+ *  - Removes users
+ *  - Argues
+ *  - Spams “please clarify”
+ *  - Acts friendly or casual
+ *
+ * ALWAYS:
+ *  - Follow SM HACKERS rules
+ *  - Respect ticket boundaries
+ *  - Be deterministic
+ ******************************************************************************************/
 
-/* ================= ENV ================= */
-if (!process.env.DISCORD_TOKEN || !process.env.GROQ_API_KEY) {
-  console.error('Missing DISCORD_TOKEN or GROQ_API_KEY');
+/* ========================================================================================
+ * IMPORTS
+ * ====================================================================================== */
+
+import { Client, GatewayIntentBits, Partials } from "discord.js";
+import Groq from "groq-sdk";
+import fs from "fs";
+
+/* ========================================================================================
+ * ENV CHECKS
+ * ====================================================================================== */
+
+if (!process.env.DISCORD_TOKEN) {
+  console.error("DISCORD_TOKEN missing");
   process.exit(1);
 }
 
-/* ================= CLIENT ================= */
+if (!process.env.GROQ_API_KEY) {
+  console.error("GROQ_API_KEY missing");
+  process.exit(1);
+}
+
+/* ========================================================================================
+ * CLIENT SETUP
+ * ====================================================================================== */
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
-  ]
+  ],
+  partials: [Partials.Channel]
 });
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+/* ========================================================================================
+ * AI CLIENT (INTENT ONLY)
+ * ====================================================================================== */
 
-/* ================= CONSTANTS ================= */
-const TICKET_PREFIX = 'ticket-';
-const TICKET_CREATE_CHANNEL = '#🎟️tickets';
-const KP_FILE = './known_polls.json';
+const groq = new Groq({
+  apiKey: process.env.GROQ_API_KEY
+});
 
-/* ================= CLIENT CHANNELS ================= */
+/* ========================================================================================
+ * FILE STORAGE
+ * ====================================================================================== */
+
+const KP_FILE = "./known_polls.json";
+
+if (!fs.existsSync(KP_FILE)) {
+  fs.writeFileSync(KP_FILE, JSON.stringify({}, null, 2));
+}
+
+let knownPolls = JSON.parse(fs.readFileSync(KP_FILE));
+
+function saveKnownPolls() {
+  fs.writeFileSync(KP_FILE, JSON.stringify(knownPolls, null, 2));
+}
+
+/* ========================================================================================
+ * CHANNEL CONSTANTS (SM HACKERS)
+ * ====================================================================================== */
+
 const CLIENT_CHANNELS = {
-  saberproxy: '<#1458751684032331787>',
-  metroproxy: '<#1458751743205707779>',
-  luminaclient: '<#1458766462713073696>',
-  lumineproxy: '<#1458766504765165610>',
-  wclient: '<#1458766648608555029>',
-  lunarproxy: '<#1458769266001182721>',
-  horizonclient: '<#1458777115582533819>',
-  vortexclient: '<#1458777244913897595>',
-  boostclient: '<#1459180134895583333>',
-  toolbox: '<#1458751684032331787>, <#1458766462713073696>'
+  saberproxy: "1458751684032331787",
+  metroproxy: "1458751743205707779",
+  lumina: "1458766462713073696",
+  lumine: "1458766504765165610",
+  wclient: "1458766648608555029",
+  lunar: "1458769266001182721",
+  horion: "1458777115582533819",
+  vortex: "1458777244913897595",
+  boost: "1459180134895583333"
 };
 
-/* ================= STORAGE ================= */
-if (!fs.existsSync(KP_FILE)) {
-  fs.writeFileSync(KP_FILE, JSON.stringify({}));
+/* ========================================================================================
+ * STATE MEMORY (PER TICKET)
+ * ====================================================================================== */
+
+const ticketState = new Map();
+
+/*
+ ticketState[channelId] = {
+   flow: "KNOWN_POLLS" | "CLAN",
+   step: "WAITING_IGN" | "WAITING_CLAN_INFO",
+   completed: false
+ }
+*/
+
+/* ========================================================================================
+ * UTILITY FUNCTIONS
+ * ====================================================================================== */
+
+function isTicketChannel(channel) {
+  return channel?.name?.startsWith("ticket-");
 }
 
-function loadKP() {
-  return JSON.parse(fs.readFileSync(KP_FILE, 'utf8'));
+function normalize(text) {
+  return text.toLowerCase().trim();
 }
 
-function saveKP(data) {
-  fs.writeFileSync(KP_FILE, JSON.stringify(data, null, 2));
+function isGreeting(text) {
+  return /^(hi|hello|hey|yo|thanks|thank you|ok|okay|cool)$/i.test(text);
 }
 
-/* ================= SYSTEM PROMPT ================= */
-const SYSTEM_PROMPT = `
-You are SMH Manager, the official AI community manager of the SM HACKERS Discord server.
-
-SM HACKERS is a Minecraft hacking community focused on anarchy servers such as 2b2t and LBSM.
-Members are experienced users of hacked clients, proxies, PvP metas, exploits, and clans.
-
-Tone rules:
-- Professional
-- Neutral
-- Calm
-- Direct
-- Never playful
-- Never verbose without reason
-
-Behavior rules:
-- Silence is valid and often preferred
-- Do not behave like tech support
-- Do not ask for logs, versions, or troubleshooting steps
-- Never debate or argue
-- Never reveal internal logic or staff decisions
-
-Ticket rules:
-- Ticket channels start with "ticket-"
-- Inside tickets, you may reply automatically
-- Outside tickets, reply only when mentioned
-
-Known Polls:
-- Ticket-only
-- Ask ONLY for Minecraft IGN
-- One IGN per ticket
-- After IGN, confirm addition
-- No vote discussion or outcome explanation
-
-Clients / Toolbox:
-- If asked, immediately provide correct channel mentions
-- No follow-up questions
-
-Social handling:
-- Greetings → short acknowledgement
-- Thanks → short acknowledgement
-- Confirmations / filler → ignore
-
-You must return JSON ONLY in this format:
-
-{
-  "should_reply": true | false,
-  "intent": "GREETING" | "THANKS" | "KNOWN_POLLS" | "CLIENT_INFO" | "IGNORE",
-  "clientKey": null | string
+function mentionsBot(message) {
+  return message.mentions.has(client.user);
 }
-`;
 
-/* ================= AI DECISION ================= */
-async function decideIntent(content, isTicket) {
-  const res = await groq.chat.completions.create({
-    model: 'llama-3.1-8b-instant',
-    temperature: 0.1,
-    max_tokens: 300,
+function reply(message, content) {
+  return message.reply({ content, allowedMentions: { repliedUser: false } });
+}
+
+/* ========================================================================================
+ * INTENT DETECTION (RULE FIRST)
+ * ====================================================================================== */
+
+function ruleDetectIntent(text) {
+  if (/known poll|kp/i.test(text)) return "KNOWN_POLLS";
+  if (/register clan|clan registration/i.test(text)) return "CLAN";
+  if (/client|proxy|toolbox|saber|lumina|lunar|horion|vortex|boost/i.test(text))
+    return "CLIENT";
+  return "UNKNOWN";
+}
+
+/* ========================================================================================
+ * AI INTENT CLASSIFIER (FALLBACK ONLY)
+ * ====================================================================================== */
+
+async function aiClassifyIntent(text) {
+  const completion = await groq.chat.completions.create({
+    model: "llama-3.1-8b-instant",
     messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
       {
-        role: 'user',
-        content: `Message: "${content}" | isTicket: ${isTicket}`
-      }
+        role: "system",
+        content:
+          "Classify intent for SM HACKERS. Return ONE word only:\n" +
+          "GREETING\nKNOWN_POLLS\nCLAN\nCLIENT\nIRRELEVANT"
+      },
+      { role: "user", content: text }
     ]
   });
 
-  return JSON.parse(res.choices[0].message.content);
+  return completion.choices[0].message.content.trim();
 }
 
-/* ================= MESSAGE HANDLER ================= */
-client.on('messageCreate', async (message) => {
-  if (message.author.bot) return;
-  if (!message.guild) return;
+/* ========================================================================================
+ * CLIENT HANDLER
+ * ====================================================================================== */
 
-  const isTicket = message.channel.name.startsWith(TICKET_PREFIX);
-  const mentioned = message.mentions.has(client.user);
+async function handleClientQuery(message) {
+  let matched = false;
 
-  if (!isTicket && !mentioned) return;
-
-  const content = message.content.replace(/<@!?(\d+)>/g, '').trim();
-  const kpData = loadKP();
-  const ticketId = message.channel.id;
-
-  /* ===== ACTIVE KP STATE ===== */
-  if (isTicket && kpData[ticketId]?.awaitingIGN) {
-    kpData[ticketId] = { ign: content };
-    saveKP(kpData);
-    return message.reply(
-      'Your IGN has been received.\nYou have been **added to the Known Polls list**.'
-    );
+  for (const [key, id] of Object.entries(CLIENT_CHANNELS)) {
+    if (normalize(message.content).includes(key)) {
+      await reply(message, `Please refer to <#${id}>.`);
+      matched = true;
+      break;
+    }
   }
 
+  if (!matched) {
+    await reply(
+      message,
+      `Relevant channels: <#${CLIENT_CHANNELS.saberproxy}>, <#${CLIENT_CHANNELS.lumina}>.`
+    );
+  }
+}
+
+/* ========================================================================================
+ * KNOWN POLLS FLOW
+ * ====================================================================================== */
+
+async function startKnownPollsFlow(message) {
+  ticketState.set(message.channel.id, {
+    flow: "KNOWN_POLLS",
+    step: "WAITING_IGN",
+    completed: false
+  });
+
+  await reply(message, "Please provide your Minecraft IGN.");
+}
+
+async function processKnownPollsIGN(message, state) {
+  const ign = message.content.trim();
+
+  knownPolls[message.author.id] = {
+    ign,
+    discordId: message.author.id,
+    addedAt: new Date().toISOString()
+  };
+
+  saveKnownPolls();
+
+  state.completed = true;
+  ticketState.delete(message.channel.id);
+
+  await reply(
+    message,
+    "Your IGN has been received. You have been added to the Known Polls list."
+  );
+}
+
+/* ========================================================================================
+ * CLAN REGISTRATION FLOW
+ * ====================================================================================== */
+
+async function startClanFlow(message) {
+  ticketState.set(message.channel.id, {
+    flow: "CLAN",
+    step: "WAITING_CLAN_INFO",
+    completed: false
+  });
+
+  await reply(
+    message,
+    "Please provide:\n1. Clan name\n2. Discord server invite\n3. Screenshot proof"
+  );
+}
+
+async function processClanInfo(message, state) {
+  state.completed = true;
+  ticketState.delete(message.channel.id);
+
+  await reply(
+    message,
+    "Your clan registration details have been received and forwarded for review."
+  );
+}
+
+/* ========================================================================================
+ * MAIN MESSAGE HANDLER
+ * ====================================================================================== */
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+
+  const text = message.content.trim();
+  const inTicket = isTicketChannel(message.channel);
+
+  /* ---------------- GREETINGS ---------------- */
+  if (isGreeting(text)) {
+    if (inTicket) {
+      await reply(message, "Acknowledged.");
+    }
+    return;
+  }
+
+  /* ---------------- CLIENT QUESTIONS ---------------- */
+  if (ruleDetectIntent(text) === "CLIENT") {
+    await handleClientQuery(message);
+    return;
+  }
+
+  /* ---------------- KNOWN POLLS ---------------- */
+  if (ruleDetectIntent(text) === "KNOWN_POLLS") {
+    if (!inTicket) {
+      await reply(message, "Please create a ticket at #🎟️tickets to proceed.");
+      return;
+    }
+    await startKnownPollsFlow(message);
+    return;
+  }
+
+  /* ---------------- CLAN REG ---------------- */
+  if (ruleDetectIntent(text) === "CLAN") {
+    if (!inTicket) {
+      await reply(message, "Please create a ticket at #🎟️tickets to register a clan.");
+      return;
+    }
+    await startClanFlow(message);
+    return;
+  }
+
+  /* ---------------- ACTIVE TICKET STATE ---------------- */
+  if (inTicket && ticketState.has(message.channel.id)) {
+    const state = ticketState.get(message.channel.id);
+
+    if (state.flow === "KNOWN_POLLS" && state.step === "WAITING_IGN") {
+      await processKnownPollsIGN(message, state);
+      return;
+    }
+
+    if (state.flow === "CLAN") {
+      await processClanInfo(message, state);
+      return;
+    }
+  }
+
+  /* ---------------- AI FALLBACK ---------------- */
   try {
-    const decision = await decideIntent(content, isTicket);
+    const aiIntent = await aiClassifyIntent(text);
 
-    if (!decision.should_reply) return;
+    if (aiIntent === "IRRELEVANT") return;
 
-    /* ---- GREETING ---- */
-    if (decision.intent === 'GREETING') {
-      return message.reply('Hello. How can I assist?');
+    if (aiIntent === "KNOWN_POLLS" && !inTicket) {
+      await reply(message, "Please create a ticket at #🎟️tickets to proceed.");
+      return;
     }
 
-    /* ---- THANKS ---- */
-    if (decision.intent === 'THANKS') {
-      return message.reply('You’re welcome.');
+    if (aiIntent === "CLIENT") {
+      await handleClientQuery(message);
+      return;
     }
 
-    /* ---- CLIENT INFO ---- */
-    if (decision.intent === 'CLIENT_INFO' && decision.clientKey) {
-      const channel = CLIENT_CHANNELS[decision.clientKey];
-      if (channel) {
-        return message.reply(`The requested resource is available in ${channel}.`);
-      }
-    }
-
-    /* ---- KNOWN POLLS ---- */
-    if (decision.intent === 'KNOWN_POLLS') {
-      if (!isTicket) {
-        return message.reply(
-          `Please create a ticket at ${TICKET_CREATE_CHANNEL} to proceed.`
-        );
-      }
-
-      if (kpData[ticketId]) {
-        return message.reply(
-          'This ticket has already been processed for Known Polls. Only one IGN can be submitted per ticket.'
-        );
-      }
-
-      kpData[ticketId] = { awaitingIGN: true };
-      saveKP(kpData);
-      return message.reply('Please provide your **Minecraft IGN** to proceed.');
-    }
-
-  } catch (err) {
-    console.error(err);
+  } catch {
+    // silent failure – never spam
   }
 });
 
-/* ================= READY ================= */
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
+/* ========================================================================================
+ * READY
+ * ====================================================================================== */
+
+client.once("ready", () => {
+  console.log(`SM HACKERS Manager online as ${client.user.tag}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);

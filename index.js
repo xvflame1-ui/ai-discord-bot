@@ -3,17 +3,13 @@ import fs from 'fs';
 import { Client, GatewayIntentBits } from 'discord.js';
 import Groq from 'groq-sdk';
 
-/* =========================================================
-   ENV VALIDATION
-========================================================= */
+/* ================= ENV ================= */
 if (!process.env.DISCORD_TOKEN || !process.env.GROQ_API_KEY) {
   console.error('Missing DISCORD_TOKEN or GROQ_API_KEY');
   process.exit(1);
 }
 
-/* =========================================================
-   DISCORD CLIENT
-========================================================= */
+/* ================= CLIENT ================= */
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -24,16 +20,12 @@ const client = new Client({
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-/* =========================================================
-   CONSTANTS & CONFIG
-========================================================= */
+/* ================= CONSTANTS ================= */
 const TICKET_PREFIX = 'ticket-';
 const TICKET_CREATE_CHANNEL = '#🎟️tickets';
-const KP_STORE = './known_polls.json';
+const KP_FILE = './known_polls.json';
 
-/* =========================================================
-   SM HACKERS CLIENT / PROXY CHANNELS (IDs)
-========================================================= */
+/* ================= CLIENT CHANNELS ================= */
 const CLIENT_CHANNELS = {
   saberproxy: '<#1458751684032331787>',
   metroproxy: '<#1458751743205707779>',
@@ -47,121 +39,93 @@ const CLIENT_CHANNELS = {
   toolbox: '<#1458751684032331787>, <#1458766462713073696>'
 };
 
-/* =========================================================
-   STORAGE (Known Polls)
-========================================================= */
-if (!fs.existsSync(KP_STORE)) {
-  fs.writeFileSync(KP_STORE, JSON.stringify({}));
+/* ================= STORAGE ================= */
+if (!fs.existsSync(KP_FILE)) {
+  fs.writeFileSync(KP_FILE, JSON.stringify({}));
 }
 
 function loadKP() {
-  return JSON.parse(fs.readFileSync(KP_STORE, 'utf8'));
+  return JSON.parse(fs.readFileSync(KP_FILE, 'utf8'));
 }
 
 function saveKP(data) {
-  fs.writeFileSync(KP_STORE, JSON.stringify(data, null, 2));
+  fs.writeFileSync(KP_FILE, JSON.stringify(data, null, 2));
 }
 
-/* =========================================================
-   MASSIVE SYSTEM PROMPT (GROUNDING)
-========================================================= */
+/* ================= SYSTEM PROMPT ================= */
 const SYSTEM_PROMPT = `
-You are **SMH Manager**, the official automated community manager of the **SM HACKERS** Discord server.
+You are SMH Manager, the official AI community manager of the SM HACKERS Discord server.
 
-SM HACKERS CONTEXT:
-- SM HACKERS is a Minecraft hacking community.
-- Focused on anarchy servers such as **2b2t**, **LBSM**, and similar environments.
-- Members are hackers, developers, exploit users, PvP players, and clan members.
-- The server hosts:
-  - Client releases
-  - Proxy tools
-  - Tournaments
-  - Giveaways
-  - Known Polls
-  - Clan registrations
-  - Role verifications
+SM HACKERS is a Minecraft hacking community focused on anarchy servers such as 2b2t and LBSM.
+Members are experienced users of hacked clients, proxies, PvP metas, exploits, and clans.
 
-YOUR ROLE:
-- Act like a senior, professional staff member.
-- Be neutral, calm, and direct.
-- Do NOT be friendly, casual, or playful.
-- Do NOT sound like a chatbot.
-- Short, precise replies are preferred.
+Tone rules:
+- Professional
+- Neutral
+- Calm
+- Direct
+- Never playful
+- Never verbose without reason
 
-GLOBAL RULES:
-- Never DM users.
-- Never argue.
-- Never speculate.
-- Never reveal internal staff logic.
-- Never approve or reject publicly.
-- Silence is acceptable when no response is required.
+Behavior rules:
+- Silence is valid and often preferred
+- Do not behave like tech support
+- Do not ask for logs, versions, or troubleshooting steps
+- Never debate or argue
+- Never reveal internal logic or staff decisions
 
-CHANNEL CONTEXT:
-- Ticket channels start with "ticket-".
-- Inside tickets, you may respond automatically.
-- Outside tickets, respond ONLY when mentioned.
+Ticket rules:
+- Ticket channels start with "ticket-"
+- Inside tickets, you may reply automatically
+- Outside tickets, reply only when mentioned
 
-KNOWN POLLS (KP):
-- Known Polls requests are **ticket-only**.
-- Inside a ticket:
-  - Ask ONLY for the user's Minecraft IGN.
-  - After IGN is provided, confirm they are added.
-  - Only ONE IGN per ticket.
-- Do NOT ask for server, clan, or proof.
-- Do NOT discuss votes, popularity, or outcomes.
+Known Polls:
+- Ticket-only
+- Ask ONLY for Minecraft IGN
+- One IGN per ticket
+- After IGN, confirm addition
+- No vote discussion or outcome explanation
 
-CLIENTS / TOOLBOX:
-- If user asks for toolbox, clients, or proxies:
-  - Direct them to the correct channels.
-  - Use channel mentions.
-  - Do NOT ask follow-up questions.
+Clients / Toolbox:
+- If asked, immediately provide correct channel mentions
+- No follow-up questions
 
-GREETINGS & THANKS:
-- Greetings → brief acknowledgement.
-- Thanks → brief acknowledgement.
-- Confirmations ("ok", "cool") → silence.
+Social handling:
+- Greetings → short acknowledgement
+- Thanks → short acknowledgement
+- Confirmations / filler → ignore
 
-OUTPUT FORMAT:
-You MUST return JSON ONLY.
+You must return JSON ONLY in this format:
 
 {
   "should_reply": true | false,
   "intent": "GREETING" | "THANKS" | "KNOWN_POLLS" | "CLIENT_INFO" | "IGNORE",
-  "clientKey": null | string,
-  "expectIGN": true | false,
-  "reply": string | null
+  "clientKey": null | string
 }
 `;
 
-/* =========================================================
-   AI DECISION FUNCTION
-========================================================= */
-async function decide(content, isTicket) {
-  const completion = await groq.chat.completions.create({
+/* ================= AI DECISION ================= */
+async function decideIntent(content, isTicket) {
+  const res = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
     temperature: 0.1,
-    max_tokens: 500,
+    max_tokens: 300,
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       {
         role: 'user',
-        content: `
-Message: "${content}"
-Context:
-- isTicket: ${isTicket}
-`
+        content: `Message: "${content}" | isTicket: ${isTicket}`
       }
     ]
   });
 
-  return JSON.parse(completion.choices[0].message.content);
+  return JSON.parse(res.choices[0].message.content);
 }
 
-/* =========================================================
-   MESSAGE HANDLER
-========================================================= */
+/* ================= MESSAGE HANDLER ================= */
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+  if (!message.guild) return;
 
   const isTicket = message.channel.name.startsWith(TICKET_PREFIX);
   const mentioned = message.mentions.has(client.user);
@@ -172,18 +136,17 @@ client.on('messageCreate', async (message) => {
   const kpData = loadKP();
   const ticketId = message.channel.id;
 
-  /* ===== ACTIVE KP FLOW ===== */
+  /* ===== ACTIVE KP STATE ===== */
   if (isTicket && kpData[ticketId]?.awaitingIGN) {
     kpData[ticketId] = { ign: content };
     saveKP(kpData);
-
     return message.reply(
       'Your IGN has been received.\nYou have been **added to the Known Polls list**.'
     );
   }
 
   try {
-    const decision = await decide(content, isTicket);
+    const decision = await decideIntent(content, isTicket);
 
     if (!decision.should_reply) return;
 
@@ -199,9 +162,10 @@ client.on('messageCreate', async (message) => {
 
     /* ---- CLIENT INFO ---- */
     if (decision.intent === 'CLIENT_INFO' && decision.clientKey) {
-      return message.reply(
-        `The requested resource is available in ${CLIENT_CHANNELS[decision.clientKey]}.`
-      );
+      const channel = CLIENT_CHANNELS[decision.clientKey];
+      if (channel) {
+        return message.reply(`The requested resource is available in ${channel}.`);
+      }
     }
 
     /* ---- KNOWN POLLS ---- */
@@ -220,26 +184,15 @@ client.on('messageCreate', async (message) => {
 
       kpData[ticketId] = { awaitingIGN: true };
       saveKP(kpData);
-
-      return message.reply(
-        'Please provide your **Minecraft IGN** to proceed.'
-      );
-    }
-
-    /* ---- CUSTOM AI REPLY ---- */
-    if (decision.reply) {
-      return message.reply(decision.reply);
+      return message.reply('Please provide your **Minecraft IGN** to proceed.');
     }
 
   } catch (err) {
     console.error(err);
-    return message.reply('There was an issue processing your request.');
   }
 });
 
-/* =========================================================
-   READY
-========================================================= */
+/* ================= READY ================= */
 client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });

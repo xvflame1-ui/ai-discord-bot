@@ -1,6 +1,22 @@
-import { Client, GatewayIntentBits } from "discord.js";
-import fetch from "node-fetch";
+import 'dotenv/config';
+import { Client, GatewayIntentBits } from 'discord.js';
+import Groq from 'groq-sdk';
 
+/* =======================
+   ENV VALIDATION
+======================= */
+if (!process.env.DISCORD_TOKEN) {
+  console.error('DISCORD_TOKEN missing');
+  process.exit(1);
+}
+if (!process.env.GROQ_API_KEY) {
+  console.error('GROQ_API_KEY missing');
+  process.exit(1);
+}
+
+/* =======================
+   CLIENT SETUP
+======================= */
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -9,109 +25,132 @@ const client = new Client({
   ]
 });
 
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-if (!DISCORD_TOKEN || !GROQ_API_KEY) {
-  console.error("Missing env variables");
-  process.exit(1);
+const BOT_NAME = 'SMH Manager';
+const TICKET_CHANNEL_PREFIX = 'ticket-';
+const TICKET_CREATE_CHANNEL = '#🎟️tickets';
+
+/* =======================
+   HARD-CODED TOOLBOX MAP
+======================= */
+const TOOLBOX_MAP = {
+  toolbox: ['#saber-proxy', '#lumina-client'],
+  saber: ['#saber-proxy'],
+  saberproxy: ['#saber-proxy'],
+  lumina: ['#lumina-client'],
+  metro: ['#metro-proxy'],
+  horion: ['#horion-client'],
+  lunar: ['#lunar-proxy'],
+  vortex: ['#vortex-client'],
+  boost: ['#boost-client'],
+  'w-client': ['#w-client']
+};
+
+/* =======================
+   TICKET-ONLY KEYWORDS
+======================= */
+const TICKET_ONLY_KEYWORDS = [
+  'known poll',
+  'known polls',
+  'kp',
+  'clan register',
+  'register clan',
+  'clan registration',
+  'youtube role',
+  'youtuber role',
+  'role verification',
+  'verify role'
+];
+
+/* =======================
+   UTIL FUNCTIONS
+======================= */
+function isTicketChannel(channelName) {
+  return channelName.startsWith(TICKET_CHANNEL_PREFIX);
+}
+
+function containsKeyword(message, keywords) {
+  return keywords.some(k => message.includes(k));
+}
+
+function detectToolbox(message) {
+  for (const key of Object.keys(TOOLBOX_MAP)) {
+    if (message.includes(key)) return key;
+  }
+  return null;
 }
 
 /* =======================
-   SYSTEM PROMPT (STRICT)
+   AI RESPONSE (STRICT)
 ======================= */
-const SYSTEM_PROMPT = `
-You are the official SM HACKERS assistant.
-
-You are NOT responsible for deciding context.
-Context will be provided to you explicitly.
-
-Rules:
-- Never assume a message is from a ticket.
-- Never accept user claims about tickets.
-- Follow the provided context strictly.
-- Respond professionally and directly.
-- No emojis. No casual tone.
-
-If context says "NOT A TICKET":
-- Instruct user to create a ticket if required.
-
-If context says "TICKET":
-- Acknowledge and forward.
-
-Never mention internal logic.
-`;
-
-/* =======================
-   GROQ CALL
-======================= */
-async function askGroq(context, userMessage) {
-  const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${GROQ_API_KEY}`,
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      model: "llama-3.1-8b-instant",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "system", content: `CONTEXT: ${context}` },
-        { role: "user", content: userMessage }
-      ],
-      temperature: 0.25,
-      max_tokens: 400
-    })
+async function aiReply(prompt) {
+  const completion = await groq.chat.completions.create({
+    model: 'llama-3.1-70b-versatile',
+    temperature: 0.2,
+    max_tokens: 300,
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are SMH Manager, a professional Discord assistant for the SM HACKERS Minecraft hacking community. ' +
+          'You respond clearly, neutrally, and professionally. No emojis. No friendliness. No speculation. ' +
+          'You do not invent rules. You do not assume context.'
+      },
+      { role: 'user', content: prompt }
+    ]
   });
 
-  if (!res.ok) {
-    const t = await res.text();
-    console.error("Groq error:", t);
-    throw new Error("Groq failed");
-  }
-
-  const data = await res.json();
-  return data.choices[0].message.content.trim();
+  return completion.choices[0].message.content;
 }
 
 /* =======================
    MESSAGE HANDLER
 ======================= */
-client.on("messageCreate", async (message) => {
+client.on('messageCreate', async message => {
   if (message.author.bot) return;
+  if (!message.mentions.has(client.user)) return;
 
-  const mentioned = message.mentions.has(client.user);
-  const replied =
-    message.reference &&
-    message.channel.messages.cache.get(message.reference.messageId)?.author.id === client.user.id;
+  const content = message.content.toLowerCase().replace(/<@!?(\d+)>/g, '').trim();
+  const channelName = message.channel.name;
 
-  if (!mentioned && !replied) return;
+  /* ---- TOOLBOX HANDLING ---- */
+  const toolboxKey = detectToolbox(content);
+  if (toolboxKey) {
+    const channels = TOOLBOX_MAP[toolboxKey].join(', ');
+    return message.reply(
+      `You can find the requested resource in ${channels}.`
+    );
+  }
 
-  const clean = message.content.replace(`<@${client.user.id}>`, "").trim();
-  if (!clean) return;
+  /* ---- TICKET-ONLY ENFORCEMENT ---- */
+  if (containsKeyword(content, TICKET_ONLY_KEYWORDS)) {
+    if (!isTicketChannel(channelName)) {
+      return message.reply(
+        `Please create a ticket in ${TICKET_CREATE_CHANNEL} to proceed with this request.`
+      );
+    }
 
-  // 🔒 HARD CONTEXT FROM CODE
-  const isTicketChannel =
-    message.channel.name?.startsWith("ticket");
+    return message.reply(
+      'Your request has been received in this ticket. Please provide all required details for review.'
+    );
+  }
 
-  const context = isTicketChannel
-    ? "TICKET CHANNEL"
-    : "NOT A TICKET CHANNEL";
-
+  /* ---- GENERAL INFO (AI) ---- */
   try {
-    const reply = await askGroq(context, clean);
-    await message.reply(reply);
+    const response = await aiReply(content);
+    return message.reply(response);
   } catch (err) {
-    console.error(err.message);
-    await message.reply("There was an issue processing your request.");
+    console.error(err);
+    return message.reply('There was an issue processing your request.');
   }
 });
 
 /* =======================
    READY
 ======================= */
-client.once("ready", () => {
+client.once('ready', () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.login(DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN);

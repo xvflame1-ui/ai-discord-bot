@@ -1,13 +1,15 @@
 {
   "name": "sm-hackers-assistant",
-  "version": "1.1.0",
-  "type": "module",
+  "version": "1.0.0",
+  "description": "SM HACKERS professional Discord assistant",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.15.3",
-    "node-fetch": "^3.3.2"
+    "groq-sdk": "^0.6.0",
+    "dotenv": "^16.4.5"
   }
 }

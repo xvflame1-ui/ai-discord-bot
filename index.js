@@ -1,15 +1,27 @@
 import 'dotenv/config';
-import fs from 'fs';
 import { Client, GatewayIntentBits } from 'discord.js';
 import Groq from 'groq-sdk';
 
-/* ================= ENV ================= */
-if (!process.env.DISCORD_TOKEN || !process.env.GROQ_API_KEY) {
-  console.error('Missing env variables');
-  process.exit(1);
-}
+/* ---------------- CONFIG ---------------- */
 
-/* ================= CLIENT ================= */
+const BOT_NAME = 'SMH Manager';
+const TICKETS_CHANNEL_NAME = 'tickets';
+const TICKET_PREFIX = 'ticket';
+
+const CLIENT_CHANNELS = {
+  saberproxy: '<#1458751684032331787>',
+  metroproxy: '<#1458751743205707779>',
+  luminaclient: '<#1458766462713073696>',
+  lumineproxy: '<#1458766504765165610>',
+  wclient: '<#1458766648608555029>',
+  lunarproxy: '<#1458769266001182721>',
+  horizonclient: '<#1458777115582533819>',
+  vortexclient: '<#1458777244913897595>',
+  boostclient: '<#1459180134895583333>'
+};
+
+/* ---------------- CLIENTS ---------------- */
+
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -20,122 +32,139 @@ const client = new Client({
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-/* ================= CONSTANTS ================= */
-const TICKET_PREFIX = 'ticket-';
-const TICKET_CHANNEL = '#🎟️tickets';
-const KP_FILE = './known_polls.json';
+/* ---------------- HELPERS ---------------- */
 
-/* ================= STORAGE ================= */
-if (!fs.existsSync(KP_FILE)) fs.writeFileSync(KP_FILE, JSON.stringify({}));
-
-function loadKP() {
-  return JSON.parse(fs.readFileSync(KP_FILE));
+function isTicketChannel(channel) {
+  return channel.name.startsWith(TICKET_PREFIX);
 }
 
-function saveKP(data) {
-  fs.writeFileSync(KP_FILE, JSON.stringify(data, null, 2));
+function normalize(text) {
+  return text.toLowerCase().replace(/[^a-z0-9 ]/g, '');
 }
 
-/* ================= AI CLASSIFIER ================= */
-async function classify(text) {
-  const res = await groq.chat.completions.create({
+/* ---------------- AI CLASSIFIER ---------------- */
+
+async function classifyMessage(content) {
+  const completion = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
-    temperature: 0.2,
-    max_tokens: 250,
+    temperature: 0,
     messages: [
       {
         role: 'system',
         content: `
-You are SMH Manager for the SM HACKERS Discord (Minecraft hacking community).
+You are SMH Manager, the official assistant for the SM HACKERS Discord (Minecraft hacking community).
 
-Decide:
-1. Is this message relevant and actionable for the bot?
-2. If yes, what intent?
+Your job:
+Decide whether the bot should reply and what the intent is.
 
 Rules:
-- Ignore casual chat, confirmations, thanks, greetings
-- Reply ONLY if action is needed
-- Be strict
+- Be strict.
+- Do NOT ask follow-up questions.
+- Greetings and thanks get short neutral replies.
+- Random chat, confirmations, filler → no reply.
+- Requests for Known Polls, roles, clan registration → tickets only.
+- Toolbox / clients → reply with channel locations.
 
-Output JSON ONLY:
+Intents:
+GREETING
+THANKS
+KNOWN_POLLS
+CLIENT_INFO
+OTHER
+
+Respond ONLY in JSON:
 {
   "should_reply": true | false,
-  "intent": "KNOWN_POLLS" | "CLIENT_INFO" | "OTHER"
+  "intent": "GREETING" | "THANKS" | "KNOWN_POLLS" | "CLIENT_INFO" | "OTHER"
 }
-`
+        `
       },
-      { role: 'user', content: text }
+      { role: 'user', content }
     ]
   });
 
-  return JSON.parse(res.choices[0].message.content);
+  return JSON.parse(completion.choices[0].message.content);
 }
 
-/* ================= MESSAGE HANDLER ================= */
-client.on('messageCreate', async message => {
+/* ---------------- BOT LOGIC ---------------- */
+
+client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
+  if (message.guild === null) return;
 
-  const isTicket = message.channel.name.startsWith(TICKET_PREFIX);
-  const kpData = loadKP();
-  const ticketId = message.channel.id;
+  const content = message.content;
+  const lower = normalize(content);
+  const mentioned = message.mentions.has(client.user);
+  const ticket = isTicketChannel(message.channel);
 
-  /* ========= ACTIVE KNOWN POLLS FLOW ========= */
-  if (isTicket && kpData[ticketId]?.awaitingIGN) {
-    kpData[ticketId] = { ign: message.content.trim() };
-    saveKP(kpData);
-
-    return message.reply(
-      'Your IGN has been recorded.\nYou have been **added to the Known Polls list**.'
-    );
-  }
-
-  /* ========= IGNORE NON-MENTIONS OUTSIDE TICKETS ========= */
-  if (!isTicket && !message.mentions.has(client.user)) return;
-
-  const content = message.content.replace(/<@!?(\d+)>/g, '').trim();
+  // Outside tickets → only respond if mentioned
+  if (!ticket && !mentioned) return;
 
   try {
-    const decision = await classify(content);
+    const decision = await classifyMessage(content);
 
-    /* ===== SILENCE IF NOT RELEVANT ===== */
     if (!decision.should_reply) return;
 
-    /* ---- KNOWN POLLS ---- */
-    if (decision.intent === 'KNOWN_POLLS') {
-      if (!isTicket) {
-        return message.reply(
-          `Please create a ticket at ${TICKET_CHANNEL} to proceed.`
-        );
-      }
+    /* ---- GREETING ---- */
+    if (decision.intent === 'GREETING') {
+      return message.reply('Hello. How can I assist?');
+    }
 
-      if (kpData[ticketId]) {
-        return message.reply(
-          'This ticket has already been processed. Only one IGN is allowed per ticket.'
-        );
-      }
+    /* ---- THANKS ---- */
+    if (decision.intent === 'THANKS') {
+      return message.reply('You’re welcome.');
+    }
 
-      kpData[ticketId] = { awaitingIGN: true };
-      saveKP(kpData);
+    /* ---- CLIENT INFO ---- */
+    if (decision.intent === 'CLIENT_INFO') {
+      for (const key in CLIENT_CHANNELS) {
+        if (lower.includes(key.replace('client', '').replace('proxy', ''))) {
+          return message.reply(
+            `The requested resource is available in ${CLIENT_CHANNELS[key]}.`
+          );
+        }
+      }
 
       return message.reply(
-        'Please provide your **Minecraft IGN** to proceed.'
+        `Available client channels:\n` +
+        Object.values(CLIENT_CHANNELS).join(', ')
       );
     }
 
-    /* ---- FALLBACK (ONLY IF AI SAID REPLY) ---- */
-    return message.reply(
-      'Please clarify your request so I can assist you.'
-    );
+    /* ---- KNOWN POLLS ---- */
+    if (decision.intent === 'KNOWN_POLLS') {
+      if (!ticket) {
+        return message.reply(
+          'Requests for Known Polls must be submitted via a ticket. Please create one in <#🎟️tickets>.'
+        );
+      }
+
+      // Ticket logic
+      if (/^[a-zA-Z0-9_]{3,16}$/.test(content.trim())) {
+        return message.reply(
+          'Your IGN has been received. You have been added to the Known Polls list.'
+        );
+      }
+
+      return message.reply(
+        'Please provide your Minecraft IGN to proceed.'
+      );
+    }
+
+    /* ---- FALLBACK ---- */
+    if (decision.intent === 'OTHER') {
+      return; // silence by design
+    }
 
   } catch (err) {
     console.error(err);
-    return message.reply('There was an issue processing your request.');
   }
 });
 
-/* ================= READY ================= */
+/* ---------------- READY ---------------- */
+
 client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
+  console.log(`Logged in as ${BOT_NAME}`);
 });
 
 client.login(process.env.DISCORD_TOKEN);

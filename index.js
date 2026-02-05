@@ -104,7 +104,7 @@ function detectClient(msg) {
 /* =======================
    AI RESPONSE
 ======================= */
-async function aiReply(prompt) {
+async function aiReply(prompt, isTicket) {
   const completion = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
     temperature: 0.15,
@@ -113,11 +113,18 @@ async function aiReply(prompt) {
       {
         role: 'system',
         content:
-          'You are SMH Manager, the official Discord assistant for the SM HACKERS Minecraft hacking community. ' +
-          'Respond professionally, neutrally, and directly. ' +
-          'Do not be friendly. Do not use emojis. ' +
-          'Do not invent rules. Do not acknowledge tickets unless inside a ticket channel. ' +
-          'If a request requires a ticket, instruct the user to create one in #🎟️tickets.'
+          'You are SMH Manager, the official Discord assistant for the SM HACKERS Minecraft hacking community.\n\n' +
+          'Rules:\n' +
+          '- Respond professionally, neutrally, and directly\n' +
+          '- No emojis\n' +
+          '- No friendliness\n' +
+          '- Never invent rules\n' +
+          '- Never accuse users\n' +
+          '- Never DM users\n' +
+          '- If a request requires a ticket and is outside a ticket channel, instruct them to create one in #🎟️tickets\n' +
+          '- Inside ticket channels, respond normally and request details when needed\n' +
+          '- Do not acknowledge tickets unless inside a ticket channel\n' +
+          '- Answer toolbox / client questions directly when applicable'
       },
       { role: 'user', content: prompt }
     ]
@@ -131,14 +138,18 @@ async function aiReply(prompt) {
 ======================= */
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
-  if (!message.mentions.has(client.user)) return;
+
+  const channelName = message.channel.name;
+  const inTicket = isTicketChannel(channelName);
+  const mentioned = message.mentions.has(client.user);
+
+  // Outside tickets → must mention bot
+  if (!inTicket && !mentioned) return;
 
   const content = message.content
     .toLowerCase()
     .replace(/<@!?(\d+)>/g, '')
     .trim();
-
-  const channelName = message.channel.name;
 
   /* ---- CLIENT / TOOLBOX HANDLING ---- */
   const clientKey = detectClient(content);
@@ -151,20 +162,20 @@ client.on('messageCreate', async message => {
 
   /* ---- TICKET ENFORCEMENT ---- */
   if (containsKeyword(content, TICKET_ONLY_KEYWORDS)) {
-    if (!isTicketChannel(channelName)) {
+    if (!inTicket) {
       return message.reply(
         `This request must be handled through a ticket. Please create one in ${TICKET_CREATE_CHANNEL}.`
       );
     }
 
     return message.reply(
-      'Your request has been received in this ticket. Please provide the required details for review.'
+      'Your request has been received. Please provide the required details for review.'
     );
   }
 
   /* ---- GENERAL AI ---- */
   try {
-    const response = await aiReply(content);
+    const response = await aiReply(content, inTicket);
     return message.reply(response);
   } catch (err) {
     console.error(err);

@@ -1,118 +1,148 @@
-import {
-  Client,
-  GatewayIntentBits,
-  SlashCommandBuilder,
-  REST,
-  Routes,
-  PermissionFlagsBits,
-  PollLayoutType
-} from "discord.js";
+import { Client, GatewayIntentBits } from "discord.js";
+import fetch from "node-fetch";
 
-/* =====================
-   ENV
-===================== */
-const TOKEN = process.env.DISCORD_TOKEN;
-const CLIENT_ID = process.env.CLIENT_ID;
-const GUILD_ID = process.env.GUILD_ID;
-
-/* =====================
-   CLIENT
-===================== */
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-/* =====================
-   COMMAND
-===================== */
-const pollCommand = new SlashCommandBuilder()
-  .setName("poll")
-  .setDescription("Create official SM HACKERS polls")
-  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
-  .addSubcommand(sub =>
-    sub
-      .setName("create")
-      .setDescription("Create up to 5 polls (2 options each)")
+const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
+const GROQ_API_KEY = process.env.GROQ_API_KEY;
 
-      // REQUIRED FIRST POLL
-      .addStringOption(o => o.setName("q1").setDescription("Question 1").setRequired(true))
-      .addStringOption(o => o.setName("q1a").setDescription("Option A (Q1)").setRequired(true))
-      .addStringOption(o => o.setName("q1b").setDescription("Option B (Q1)").setRequired(true))
+if (!DISCORD_TOKEN || !GROQ_API_KEY) {
+  console.error("Missing environment variables.");
+  process.exit(1);
+}
 
-      // OPTIONAL POLLS (ALL OPTIONAL AFTER THIS POINT)
-      .addStringOption(o => o.setName("q2").setDescription("Question 2").setRequired(false))
-      .addStringOption(o => o.setName("q2a").setDescription("Option A (Q2)").setRequired(false))
-      .addStringOption(o => o.setName("q2b").setDescription("Option B (Q2)").setRequired(false))
+/* =======================
+   SM HACKERS SYSTEM PROMPT
+   ======================= */
 
-      .addStringOption(o => o.setName("q3").setDescription("Question 3").setRequired(false))
-      .addStringOption(o => o.setName("q3a").setDescription("Option A (Q3)").setRequired(false))
-      .addStringOption(o => o.setName("q3b").setDescription("Option B (Q3)").setRequired(false))
+const SYSTEM_PROMPT = `
+You are SMH Manager, the official AI assistant of the SM HACKERS Discord server.
 
-      .addStringOption(o => o.setName("q4").setDescription("Question 4").setRequired(false))
-      .addStringOption(o => o.setName("q4a").setDescription("Option A (Q4)").setRequired(false))
-      .addStringOption(o => o.setName("q4b").setDescription("Option B (Q4)").setRequired(false))
+Context:
+SM HACKERS is a Minecraft hacking community (2b2t, LBSM, anarchy, clients, proxies).
+Members are hackers, developers, clan leaders, and competitive players.
 
-      .addStringOption(o => o.setName("q5").setDescription("Question 5").setRequired(false))
-      .addStringOption(o => o.setName("q5a").setDescription("Option A (Q5)").setRequired(false))
-      .addStringOption(o => o.setName("q5b").setDescription("Option B (Q5)").setRequired(false))
-  );
+Your role:
+- Act professional, neutral, and direct.
+- Do NOT sound friendly, casual, or playful.
+- Do NOT use emojis unless strictly necessary.
+- Do NOT argue or speculate.
+- Do NOT reveal internal moderation or review logic.
+- Never DM users.
+- Respond only in the channel where you are mentioned or replied to.
 
-/* =====================
-   REGISTER
-===================== */
-const rest = new REST({ version: "10" }).setToken(TOKEN);
+Core rules:
 
-await rest.put(
-  Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
-  { body: [pollCommand.toJSON()] }
-);
+Known Polls:
+- Users must create a ticket to request Known Polls.
+- Acknowledge the request.
+- Instruct them to open a ticket.
+- Do NOT discuss votes, popularity, approval, or rejection.
 
-/* =====================
-   EVENTS
-===================== */
+Toolbox:
+- If user asks for toolbox or general tools:
+  Respond:
+  "Toolbox resources are available in #saber-proxy and #lumina-client."
+- If a specific proxy or client is mentioned, point to the relevant channel.
+
+Clan registration:
+- Requires ticket.
+- Ask for clan name, screenshot proof, and Discord server link.
+- Do not approve or reject publicly.
+
+YouTuber role:
+- Requires ticket.
+- Minimum 100 subscribers.
+- Proof required.
+- If approved, confirm role added.
+- If not, clearly state requirements not met.
+
+Behavior:
+- Understand slang and mixed languages.
+- Reply concisely.
+- Be authoritative, not conversational.
+- If message is unrelated to SM HACKERS, do not respond.
+
+Never mention AI, LLMs, Groq, or models.
+Never roleplay beyond this role.
+`;
+
+/* =======================
+   GROQ REQUEST
+   ======================= */
+
+async function askGroq(userMessage) {
+  const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${GROQ_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model: "llama-3.1-70b-versatile",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userMessage }
+      ],
+      temperature: 0.4,
+      max_tokens: 500
+    })
+  });
+
+  const data = await response.json();
+
+  if (!data.choices || !data.choices[0]) {
+    throw new Error("Invalid Groq response");
+  }
+
+  return data.choices[0].message.content.trim();
+}
+
+/* =======================
+   MESSAGE HANDLER
+   ======================= */
+
+client.on("messageCreate", async (message) => {
+  if (message.author.bot) return;
+
+  const mentioned = message.mentions.has(client.user);
+  const replied =
+    message.reference &&
+    message.reference.messageId &&
+    message.channel.messages.cache.get(message.reference.messageId)?.author.id === client.user.id;
+
+  if (!mentioned && !replied) return;
+
+  try {
+    const cleanMessage = message.content
+      .replace(`<@${client.user.id}>`, "")
+      .trim();
+
+    if (!cleanMessage) return;
+
+    const reply = await askGroq(cleanMessage);
+
+    if (reply.length > 0) {
+      await message.reply(reply);
+    }
+  } catch (err) {
+    console.error("Groq error:", err.message);
+    await message.reply("There was an issue processing your request.");
+  }
+});
+
+/* =======================
+   READY
+   ======================= */
+
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== "poll") return;
-
-  const polls = [];
-
-  for (let i = 1; i <= 5; i++) {
-    const q = interaction.options.getString(`q${i}`);
-    const a = interaction.options.getString(`q${i}a`);
-    const b = interaction.options.getString(`q${i}b`);
-
-    if (q && a && b) {
-      polls.push({ q, options: [a, b] });
-    }
-  }
-
-  if (!polls.length) {
-    await interaction.reply({ content: "No valid polls provided.", ephemeral: true });
-    return;
-  }
-
-  for (const poll of polls) {
-    await interaction.channel.send({
-      poll: {
-        question: { text: poll.q },
-        answers: poll.options.map(o => ({ text: o })),
-        allowMultiselect: false,
-        layoutType: PollLayoutType.Default
-      }
-    });
-  }
-
-  await interaction.reply({
-    content: `Created ${polls.length} poll(s).`,
-    ephemeral: true
-  });
-});
-
-/* =====================
-   START
-===================== */
-client.login(TOKEN);
+client.login(DISCORD_TOKEN);

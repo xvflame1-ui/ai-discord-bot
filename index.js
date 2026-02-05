@@ -32,7 +32,7 @@ const TICKET_CHANNEL_PREFIX = 'ticket-';
 const TICKET_CREATE_CHANNEL = '#🎟️tickets';
 
 /* =======================
-   HARD-CODED TOOLBOX MAP
+   TOOLBOX / CLIENT CHANNELS
 ======================= */
 const TOOLBOX_MAP = {
   toolbox: ['#saber-proxy', '#lumina-client'],
@@ -48,7 +48,7 @@ const TOOLBOX_MAP = {
 };
 
 /* =======================
-   TICKET-ONLY KEYWORDS
+   TICKET-ONLY TOPICS
 ======================= */
 const TICKET_ONLY_KEYWORDS = [
   'known poll',
@@ -64,38 +64,38 @@ const TICKET_ONLY_KEYWORDS = [
 ];
 
 /* =======================
-   UTIL FUNCTIONS
+   HELPERS
 ======================= */
-function isTicketChannel(channelName) {
-  return channelName.startsWith(TICKET_CHANNEL_PREFIX);
+function isTicketChannel(name) {
+  return name.startsWith(TICKET_CHANNEL_PREFIX);
 }
 
-function containsKeyword(message, keywords) {
-  return keywords.some(k => message.includes(k));
+function containsKeyword(msg, list) {
+  return list.some(k => msg.includes(k));
 }
 
-function detectToolbox(message) {
+function detectToolbox(msg) {
   for (const key of Object.keys(TOOLBOX_MAP)) {
-    if (message.includes(key)) return key;
+    if (msg.includes(key)) return key;
   }
   return null;
 }
 
 /* =======================
-   AI RESPONSE (STRICT)
+   AI RESPONSE (FIXED MODEL)
 ======================= */
 async function aiReply(prompt) {
   const completion = await groq.chat.completions.create({
-    model: 'llama-3.1-70b-versatile',
-    temperature: 0.2,
+    model: 'llama-3.1-8b-instant',
+    temperature: 0.15,
     max_tokens: 300,
     messages: [
       {
         role: 'system',
         content:
           'You are SMH Manager, a professional Discord assistant for the SM HACKERS Minecraft hacking community. ' +
-          'You respond clearly, neutrally, and professionally. No emojis. No friendliness. No speculation. ' +
-          'You do not invent rules. You do not assume context.'
+          'Use professional, neutral English. No emojis. No friendliness. No assumptions. ' +
+          'Never invent rules. Never acknowledge tickets unless in ticket channels.'
       },
       { role: 'user', content: prompt }
     ]
@@ -111,7 +111,11 @@ client.on('messageCreate', async message => {
   if (message.author.bot) return;
   if (!message.mentions.has(client.user)) return;
 
-  const content = message.content.toLowerCase().replace(/<@!?(\d+)>/g, '').trim();
+  const content = message.content
+    .toLowerCase()
+    .replace(/<@!?(\d+)>/g, '')
+    .trim();
+
   const channelName = message.channel.name;
 
   /* ---- TOOLBOX HANDLING ---- */
@@ -119,7 +123,7 @@ client.on('messageCreate', async message => {
   if (toolboxKey) {
     const channels = TOOLBOX_MAP[toolboxKey].join(', ');
     return message.reply(
-      `You can find the requested resource in ${channels}.`
+      `The requested resource is available in ${channels}.`
     );
   }
 
@@ -136,13 +140,15 @@ client.on('messageCreate', async message => {
     );
   }
 
-  /* ---- GENERAL INFO (AI) ---- */
+  /* ---- GENERAL AI RESPONSE ---- */
   try {
     const response = await aiReply(content);
     return message.reply(response);
   } catch (err) {
     console.error(err);
-    return message.reply('There was an issue processing your request.');
+    return message.reply(
+      'There was an issue processing your request.'
+    );
   }
 });
 

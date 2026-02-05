@@ -1,174 +1,111 @@
-import 'dotenv/config';
 import {
   Client,
   GatewayIntentBits,
-  PermissionsBitField,
+  SlashCommandBuilder,
   REST,
   Routes,
-  SlashCommandBuilder,
-} from 'discord.js';
+  PermissionFlagsBits,
+  PollLayoutType
+} from "discord.js";
 
-/* =========================
-   BASIC CLIENT SETUP
-========================= */
-
-const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-  ],
-});
-
+/* ================================
+   ENV
+================================ */
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
+const GUILD_ID = process.env.GUILD_ID;
 
-if (!TOKEN || !CLIENT_ID) {
-  console.error('DISCORD_TOKEN or CLIENT_ID missing');
-  process.exit(1);
-}
+/* ================================
+   CLIENT
+================================ */
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds]
+});
 
-/* =========================
-   SLASH COMMAND DEFINITION
-========================= */
-
+/* ================================
+   SLASH COMMAND
+================================ */
 const pollCommand = new SlashCommandBuilder()
-  .setName('poll')
-  .setDescription('Create official SM HACKERS polls')
-  .setDefaultMemberPermissions(PermissionsBitField.Flags.Administrator)
+  .setName("poll")
+  .setDescription("Create official SM HACKERS polls")
+  .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
-    sub
-      .setName('create')
-      .setDescription('Create up to 10 official polls')
-
-      // -------- POLL 1 --------
-      .addStringOption(o =>
-        o.setName('question_1').setDescription('Poll question 1').setRequired(true))
-      .addStringOption(o =>
-        o.setName('option1_1').setDescription('Option 1 (required)').setRequired(true))
-      .addStringOption(o =>
-        o.setName('option2_1').setDescription('Option 2 (required)').setRequired(true))
-      .addStringOption(o =>
-        o.setName('option3_1').setDescription('Option 3').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option4_1').setDescription('Option 4').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option5_1').setDescription('Option 5').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option6_1').setDescription('Option 6').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option7_1').setDescription('Option 7').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option8_1').setDescription('Option 8').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option9_1').setDescription('Option 9').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option10_1').setDescription('Option 10').setRequired(false))
-
-      // -------- POLL 2 (OPTIONAL) --------
-      .addStringOption(o =>
-        o.setName('question_2').setDescription('Poll question 2').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option1_2').setDescription('Option 1 (required if Q2)').setRequired(false))
-      .addStringOption(o =>
-        o.setName('option2_2').setDescription('Option 2 (required if Q2)').setRequired(false))
+    sub.setName("create").setDescription("Create up to 10 polls (2 options each)")
   );
 
-const commands = [pollCommand.toJSON()];
-
-/* =========================
-   REGISTER COMMAND
-========================= */
-
-const rest = new REST({ version: '10' }).setToken(TOKEN);
-
-(async () => {
-  try {
-    await rest.put(
-      Routes.applicationCommands(CLIENT_ID),
-      { body: commands }
+for (let i = 1; i <= 10; i++) {
+  pollCommand.options[0]
+    .addStringOption(o =>
+      o.setName(`question_${i}`).setDescription(`Question ${i}`).setRequired(i === 1)
+    )
+    .addStringOption(o =>
+      o.setName(`option1_${i}`).setDescription(`Option A for Q${i}`).setRequired(i === 1)
+    )
+    .addStringOption(o =>
+      o.setName(`option2_${i}`).setDescription(`Option B for Q${i}`).setRequired(i === 1)
     );
-    console.log('Slash command registered');
-  } catch (err) {
-    console.error('Command registration failed', err);
-  }
-})();
+}
 
-/* =========================
+/* ================================
+   REGISTER COMMAND
+================================ */
+const rest = new REST({ version: "10" }).setToken(TOKEN);
+
+client.once("ready", async () => {
+  console.log(`Logged in as ${client.user.tag}`);
+
+  const body = [pollCommand.toJSON()];
+  const route = GUILD_ID
+    ? Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID)
+    : Routes.applicationCommands(CLIENT_ID);
+
+  await rest.put(route, { body });
+  console.log("Poll command registered.");
+});
+
+/* ================================
    INTERACTION HANDLER
-========================= */
-
-client.on('interactionCreate', async interaction => {
+================================ */
+client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
-  if (interaction.commandName !== 'poll') return;
+  if (interaction.commandName !== "poll") return;
+  if (interaction.options.getSubcommand() !== "create") return;
 
-  if (interaction.options.getSubcommand() !== 'create') return;
+  await interaction.deferReply({ ephemeral: true });
 
-  try {
-    const createdPolls = [];
+  let created = 0;
 
-    for (let i = 1; i <= 10; i++) {
-      const question = interaction.options.getString(`question_${i}`);
-      if (!question) continue;
+  for (let i = 1; i <= 10; i++) {
+    const question = interaction.options.getString(`question_${i}`);
+    const opt1 = interaction.options.getString(`option1_${i}`);
+    const opt2 = interaction.options.getString(`option2_${i}`);
 
-      const options = [];
+    if (!question || !opt1 || !opt2) continue;
 
-      for (let j = 1; j <= 10; j++) {
-        const opt = interaction.options.getString(`option${j}_${i}`);
-        if (opt) options.push({ text: opt });
+    await interaction.channel.send({
+      poll: {
+        question: { text: question },
+        answers: [
+          { text: opt1 },
+          { text: opt2 }
+        ],
+        allowMultiselect: false,
+        layoutType: PollLayoutType.Default,
+        duration: 24 * 60 * 60
       }
-
-      if (options.length < 2) {
-        await interaction.reply({
-          content: `Poll ${i} must have at least 2 options.`,
-          ephemeral: true,
-        });
-        return;
-      }
-
-      createdPolls.push({ question, options });
-    }
-
-    if (createdPolls.length === 0) {
-      await interaction.reply({
-        content: 'No valid polls were created.',
-        ephemeral: true,
-      });
-      return;
-    }
-
-    await interaction.reply({
-      content: `Creating ${createdPolls.length} official SM HACKERS poll(s)...`,
-      ephemeral: true,
     });
 
-    for (const poll of createdPolls) {
-      await interaction.channel.send({
-        poll: {
-          question: { text: poll.question },
-          answers: poll.options,
-          duration: 24,
-          allowMultiselect: false,
-        },
-      });
-    }
-
-  } catch (err) {
-    console.error(err);
-    if (!interaction.replied) {
-      await interaction.reply({
-        content: 'There was an issue processing the request.',
-        ephemeral: true,
-      });
-    }
+    created++;
   }
+
+  await interaction.editReply(
+    created
+      ? `Created ${created} official poll(s).`
+      : "No valid polls were created."
+  );
 });
 
-/* =========================
-   READY
-========================= */
-
-client.once('ready', () => {
-  console.log(`Logged in as ${client.user.tag}`);
-});
-
+/* ================================
+   LOGIN
+================================ */
 client.login(TOKEN);

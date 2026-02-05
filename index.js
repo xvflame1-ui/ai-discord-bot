@@ -8,104 +8,111 @@ import {
   PollLayoutType
 } from "discord.js";
 
-/* ================================
+/* =====================
    ENV
-================================ */
+===================== */
 const TOKEN = process.env.DISCORD_TOKEN;
 const CLIENT_ID = process.env.CLIENT_ID;
 const GUILD_ID = process.env.GUILD_ID;
 
-/* ================================
+/* =====================
    CLIENT
-================================ */
+===================== */
 const client = new Client({
   intents: [GatewayIntentBits.Guilds]
 });
 
-/* ================================
-   SLASH COMMAND
-================================ */
+/* =====================
+   COMMAND
+===================== */
 const pollCommand = new SlashCommandBuilder()
   .setName("poll")
   .setDescription("Create official SM HACKERS polls")
   .setDefaultMemberPermissions(PermissionFlagsBits.Administrator)
   .addSubcommand(sub =>
-    sub.setName("create").setDescription("Create up to 10 polls (2 options each)")
+    sub
+      .setName("create")
+      .setDescription("Create up to 5 polls (2 options each)")
+
+      // REQUIRED FIRST POLL
+      .addStringOption(o => o.setName("q1").setDescription("Question 1").setRequired(true))
+      .addStringOption(o => o.setName("q1a").setDescription("Option A (Q1)").setRequired(true))
+      .addStringOption(o => o.setName("q1b").setDescription("Option B (Q1)").setRequired(true))
+
+      // OPTIONAL POLLS (ALL OPTIONAL AFTER THIS POINT)
+      .addStringOption(o => o.setName("q2").setDescription("Question 2").setRequired(false))
+      .addStringOption(o => o.setName("q2a").setDescription("Option A (Q2)").setRequired(false))
+      .addStringOption(o => o.setName("q2b").setDescription("Option B (Q2)").setRequired(false))
+
+      .addStringOption(o => o.setName("q3").setDescription("Question 3").setRequired(false))
+      .addStringOption(o => o.setName("q3a").setDescription("Option A (Q3)").setRequired(false))
+      .addStringOption(o => o.setName("q3b").setDescription("Option B (Q3)").setRequired(false))
+
+      .addStringOption(o => o.setName("q4").setDescription("Question 4").setRequired(false))
+      .addStringOption(o => o.setName("q4a").setDescription("Option A (Q4)").setRequired(false))
+      .addStringOption(o => o.setName("q4b").setDescription("Option B (Q4)").setRequired(false))
+
+      .addStringOption(o => o.setName("q5").setDescription("Question 5").setRequired(false))
+      .addStringOption(o => o.setName("q5a").setDescription("Option A (Q5)").setRequired(false))
+      .addStringOption(o => o.setName("q5b").setDescription("Option B (Q5)").setRequired(false))
   );
 
-for (let i = 1; i <= 10; i++) {
-  pollCommand.options[0]
-    .addStringOption(o =>
-      o.setName(`question_${i}`).setDescription(`Question ${i}`).setRequired(i === 1)
-    )
-    .addStringOption(o =>
-      o.setName(`option1_${i}`).setDescription(`Option A for Q${i}`).setRequired(i === 1)
-    )
-    .addStringOption(o =>
-      o.setName(`option2_${i}`).setDescription(`Option B for Q${i}`).setRequired(i === 1)
-    );
-}
-
-/* ================================
-   REGISTER COMMAND
-================================ */
+/* =====================
+   REGISTER
+===================== */
 const rest = new REST({ version: "10" }).setToken(TOKEN);
 
-client.once("ready", async () => {
+await rest.put(
+  Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+  { body: [pollCommand.toJSON()] }
+);
+
+/* =====================
+   EVENTS
+===================== */
+client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
-
-  const body = [pollCommand.toJSON()];
-  const route = GUILD_ID
-    ? Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID)
-    : Routes.applicationCommands(CLIENT_ID);
-
-  await rest.put(route, { body });
-  console.log("Poll command registered.");
 });
 
-/* ================================
-   INTERACTION HANDLER
-================================ */
 client.on("interactionCreate", async interaction => {
   if (!interaction.isChatInputCommand()) return;
   if (interaction.commandName !== "poll") return;
-  if (interaction.options.getSubcommand() !== "create") return;
 
-  await interaction.deferReply({ ephemeral: true });
+  const polls = [];
 
-  let created = 0;
+  for (let i = 1; i <= 5; i++) {
+    const q = interaction.options.getString(`q${i}`);
+    const a = interaction.options.getString(`q${i}a`);
+    const b = interaction.options.getString(`q${i}b`);
 
-  for (let i = 1; i <= 10; i++) {
-    const question = interaction.options.getString(`question_${i}`);
-    const opt1 = interaction.options.getString(`option1_${i}`);
-    const opt2 = interaction.options.getString(`option2_${i}`);
-
-    if (!question || !opt1 || !opt2) continue;
-
-    await interaction.channel.send({
-      poll: {
-        question: { text: question },
-        answers: [
-          { text: opt1 },
-          { text: opt2 }
-        ],
-        allowMultiselect: false,
-        layoutType: PollLayoutType.Default,
-        duration: 24 * 60 * 60
-      }
-    });
-
-    created++;
+    if (q && a && b) {
+      polls.push({ q, options: [a, b] });
+    }
   }
 
-  await interaction.editReply(
-    created
-      ? `Created ${created} official poll(s).`
-      : "No valid polls were created."
-  );
+  if (!polls.length) {
+    await interaction.reply({ content: "No valid polls provided.", ephemeral: true });
+    return;
+  }
+
+  for (const poll of polls) {
+    await interaction.channel.send({
+      poll: {
+        question: { text: poll.q },
+        answers: poll.options.map(o => ({ text: o })),
+        allowMultiselect: false,
+        layoutType: PollLayoutType.Default
+      }
+    });
+  }
+
+  await interaction.reply({
+    content: `Created ${polls.length} poll(s).`,
+    ephemeral: true
+  });
 });
 
-/* ================================
-   LOGIN
-================================ */
+/* =====================
+   START
+===================== */
 client.login(TOKEN);

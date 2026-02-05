@@ -1,21 +1,18 @@
 import 'dotenv/config';
+import fs from 'fs';
 import { Client, GatewayIntentBits } from 'discord.js';
 import Groq from 'groq-sdk';
 
 /* =======================
-   ENV VALIDATION
+   ENV
 ======================= */
-if (!process.env.DISCORD_TOKEN) {
-  console.error('DISCORD_TOKEN missing');
-  process.exit(1);
-}
-if (!process.env.GROQ_API_KEY) {
-  console.error('GROQ_API_KEY missing');
+if (!process.env.DISCORD_TOKEN || !process.env.GROQ_API_KEY) {
+  console.error('Missing environment variables');
   process.exit(1);
 }
 
 /* =======================
-   CLIENT SETUP
+   CLIENT
 ======================= */
 const client = new Client({
   intents: [
@@ -30,107 +27,88 @@ const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 /* =======================
    CONSTANTS
 ======================= */
-const BOT_NAME = 'SMH Manager';
-const TICKET_CHANNEL_PREFIX = 'ticket-';
+const TICKET_PREFIX = 'ticket-';
 const TICKET_CREATE_CHANNEL = '#🎟️tickets';
+const KP_STORE = './known_polls.json';
 
 /* =======================
-   CLIENT / PROXY CHANNEL IDS
+   CLIENT CHANNEL IDS
 ======================= */
 const CLIENT_CHANNELS = {
-  saber: ['<#1458751684032331787>'],
-  saberproxy: ['<#1458751684032331787>'],
-
-  metro: ['<#1458751743205707779>'],
-  metroproxy: ['<#1458751743205707779>'],
-
-  lumina: ['<#1458766462713073696>'],
-  luminaclient: ['<#1458766462713073696>'],
-
-  lumine: ['<#1458766504765165610>'],
-  lumineproxy: ['<#1458766504765165610>'],
-
-  wclient: ['<#1458766648608555029>'],
-
-  lunar: ['<#1458769266001182721>'],
-  lunarproxy: ['<#1458769266001182721>'],
-
-  horion: ['<#1458777115582533819>'],
-  horizon: ['<#1458777115582533819>'],
-
-  vortex: ['<#1458777244913897595>'],
-
-  boost: ['<#1459180134895583333>'],
-
-  toolbox: [
+  saberproxy: '<#1458751684032331787>',
+  metroproxy: '<#1458751743205707779>',
+  luminaclient: '<#1458766462713073696>',
+  lumineproxy: '<#1458766504765165610>',
+  wclient: '<#1458766648608555029>',
+  lunarproxy: '<#1458769266001182721>',
+  horizonclient: '<#1458777115582533819>',
+  vortexclient: '<#1458777244913897595>',
+  boostclient: '<#1459180134895583333>',
+  toolbox:
     '<#1458751684032331787>, <#1458766462713073696>'
-  ]
 };
 
 /* =======================
-   TICKET-ONLY REQUESTS
+   STORAGE
 ======================= */
-const TICKET_ONLY_KEYWORDS = [
-  'known poll',
-  'known polls',
-  'kp',
-  'clan register',
-  'register clan',
-  'clan registration',
-  'youtube role',
-  'youtuber role',
-  'role verification',
-  'verify role'
-];
-
-/* =======================
-   HELPERS
-======================= */
-function isTicketChannel(name) {
-  return name.startsWith(TICKET_CHANNEL_PREFIX);
+if (!fs.existsSync(KP_STORE)) {
+  fs.writeFileSync(KP_STORE, JSON.stringify({}));
 }
 
-function containsKeyword(msg, list) {
-  return list.some(k => msg.includes(k));
+function loadKP() {
+  return JSON.parse(fs.readFileSync(KP_STORE));
 }
 
-function detectClient(msg) {
-  for (const key of Object.keys(CLIENT_CHANNELS)) {
-    if (msg.includes(key)) return key;
-  }
-  return null;
+function saveKP(data) {
+  fs.writeFileSync(KP_STORE, JSON.stringify(data, null, 2));
 }
 
 /* =======================
-   AI RESPONSE
+   AI DECISION ENGINE
 ======================= */
-async function aiReply(prompt, isTicket) {
+async function decide(message, isTicket) {
   const completion = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
-    temperature: 0.15,
-    max_tokens: 350,
+    temperature: 0.2,
+    max_tokens: 400,
     messages: [
       {
         role: 'system',
-        content:
-          'You are SMH Manager, the official Discord assistant for the SM HACKERS Minecraft hacking community.\n\n' +
-          'Rules:\n' +
-          '- Respond professionally, neutrally, and directly\n' +
-          '- No emojis\n' +
-          '- No friendliness\n' +
-          '- Never invent rules\n' +
-          '- Never accuse users\n' +
-          '- Never DM users\n' +
-          '- If a request requires a ticket and is outside a ticket channel, instruct them to create one in #🎟️tickets\n' +
-          '- Inside ticket channels, respond normally and request details when needed\n' +
-          '- Do not acknowledge tickets unless inside a ticket channel\n' +
-          '- Answer toolbox / client questions directly when applicable'
+        content: `
+You are the decision brain of SMH Manager for the SM HACKERS Discord server.
+
+SM HACKERS is a Minecraft hacking community (2b2t, LBSM, anarchy, clients, proxies).
+
+Your job:
+- Understand user intent
+- Decide the correct action
+- Output STRICT JSON ONLY
+
+Rules:
+- Known Polls, clan registration, and roles require tickets
+- Only one IGN per ticket for Known Polls
+- Toolbox / clients should return channels
+- Never approve or deny publicly
+- Never mention internal logic
+
+Context:
+- isTicket: ${isTicket}
+
+Output format (JSON ONLY):
+{
+  "intent": "...",
+  "action": "...",
+  "reply": "...",
+  "clientKey": null | "saberproxy" | "toolbox",
+  "expectIGN": true | false
+}
+`
       },
-      { role: 'user', content: prompt }
+      { role: 'user', content: message }
     ]
   });
 
-  return completion.choices[0].message.content;
+  return JSON.parse(completion.choices[0].message.content);
 }
 
 /* =======================
@@ -139,49 +117,62 @@ async function aiReply(prompt, isTicket) {
 client.on('messageCreate', async message => {
   if (message.author.bot) return;
 
-  const channelName = message.channel.name;
-  const inTicket = isTicketChannel(channelName);
+  const isTicket = message.channel.name.startsWith(TICKET_PREFIX);
   const mentioned = message.mentions.has(client.user);
 
-  // Outside tickets → must mention bot
-  if (!inTicket && !mentioned) return;
+  if (!isTicket && !mentioned) return;
 
-  const content = message.content
-    .toLowerCase()
-    .replace(/<@!?(\d+)>/g, '')
-    .trim();
+  const content = message.content.replace(/<@!?(\d+)>/g, '').trim();
 
-  /* ---- CLIENT / TOOLBOX HANDLING ---- */
-  const clientKey = detectClient(content);
-  if (clientKey) {
-    const channels = CLIENT_CHANNELS[clientKey].join(', ');
-    return message.reply(
-      `The requested resource is available in ${channels}.`
-    );
-  }
+  try {
+    const decision = await decide(content, isTicket);
 
-  /* ---- TICKET ENFORCEMENT ---- */
-  if (containsKeyword(content, TICKET_ONLY_KEYWORDS)) {
-    if (!inTicket) {
+    /* ---- CLIENT / TOOLBOX ---- */
+    if (decision.clientKey && CLIENT_CHANNELS[decision.clientKey]) {
       return message.reply(
-        `This request must be handled through a ticket. Please create one in ${TICKET_CREATE_CHANNEL}.`
+        `The requested resource is available in ${CLIENT_CHANNELS[decision.clientKey]}.`
       );
     }
 
-    return message.reply(
-      'Your request has been received. Please provide the required details for review.'
-    );
-  }
+    /* ---- KNOWN POLLS ---- */
+    if (decision.intent === 'KNOWN_POLLS') {
+      if (!isTicket) {
+        return message.reply(
+          `Please create a ticket at ${TICKET_CREATE_CHANNEL} to proceed.`
+        );
+      }
 
-  /* ---- GENERAL AI ---- */
-  try {
-    const response = await aiReply(content, inTicket);
-    return message.reply(response);
+      const kpData = loadKP();
+      const ticketId = message.channel.id;
+
+      if (kpData[ticketId]) {
+        return message.reply(
+          'This ticket has already been processed for Known Polls. Only one IGN can be submitted per ticket.'
+        );
+      }
+
+      if (decision.expectIGN) {
+        kpData[ticketId] = { awaitingIGN: true };
+        saveKP(kpData);
+        return message.reply(
+          'Please provide your **Minecraft IGN** to proceed.'
+        );
+      }
+
+      // Treat message as IGN
+      kpData[ticketId] = { ign: content };
+      saveKP(kpData);
+      return message.reply(
+        'Your IGN has been received.\nYou have been **added to the Known Polls list**.'
+      );
+    }
+
+    /* ---- GENERAL ---- */
+    return message.reply(decision.reply);
+
   } catch (err) {
     console.error(err);
-    return message.reply(
-      'There was an issue processing your request.'
-    );
+    return message.reply('There was an issue processing your request.');
   }
 });
 

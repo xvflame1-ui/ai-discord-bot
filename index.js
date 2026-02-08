@@ -1,11 +1,11 @@
 import 'dotenv/config';
 import fs from 'fs';
 import { Client, GatewayIntentBits } from 'discord.js';
-import Groq from 'groq-sdk';
+import OpenAI from 'openai';
 
 /* ================= ENV ================= */
-if (!process.env.DISCORD_TOKEN || !process.env.GROQ_API_KEY) {
-  console.error('Missing env vars');
+if (!process.env.DISCORD_TOKEN || !process.env.OPENAI_API_KEY) {
+  console.error('Missing DISCORD_TOKEN or OPENAI_API_KEY');
   process.exit(1);
 }
 
@@ -18,13 +18,15 @@ const client = new Client({
   ]
 });
 
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY
+});
 
 /* ================= CONSTANTS ================= */
 const TICKET_PREFIX = 'ticket-';
 const KP_FILE = './known_polls.json';
 
-/* ================= CHANNEL DATA ================= */
+/* ================= CLIENT CHANNELS ================= */
 const CLIENT_CHANNELS = {
   saberproxy: '<#1458751684032331787>',
   metroproxy: '<#1458751743205707779>',
@@ -41,16 +43,14 @@ const CLIENT_CHANNELS = {
 /* ================= STORAGE ================= */
 if (!fs.existsSync(KP_FILE)) fs.writeFileSync(KP_FILE, JSON.stringify({}));
 const kpData = JSON.parse(fs.readFileSync(KP_FILE));
-
 const ticketState = new Map();
 
 /* ================= HELPERS ================= */
 const isTicket = (c) => c.name.startsWith(TICKET_PREFIX);
-const normalize = (t) =>
-  t.replace(/<@!?(\d+)>/g, '').trim();
+const stripMentions = (t) => t.replace(/<@!?(\d+)>/g, '').trim();
 
 /* ================= SYSTEM PROMPT ================= */
-function buildSystemPrompt(context) {
+function systemPrompt(ctx) {
   return `
 You are the official AI community manager of **SM HACKERS**.
 
@@ -63,12 +63,13 @@ TONE:
 - Direct
 - Calm
 
-GLOBAL RULES:
+HARD RULES (never break):
 - Never DM users
 - Never approve or deny applications
-- Never discuss votes or internal reviews
-- Do not argue
-- Do not overexplain
+- Never discuss internal reviews or votes
+- Never argue
+- Never overexplain
+- Follow ticket-only rules strictly
 
 KNOWN POLLS:
 - Ticket-only
@@ -79,36 +80,37 @@ KNOWN POLLS:
 YOUTUBE ROLE:
 - Ticket-only
 - Requirements:
-  - 100+ subscribers
-  - Channel link
-  - Proof of ownership
+  • 100+ subscribers
+  • Channel link
+  • Proof of ownership
 - Do NOT assign roles
 
-CLIENT / TOOLBOX:
-Use these channels when relevant:
+CLIENT / TOOLBOX CHANNELS:
 ${Object.entries(CLIENT_CHANNELS)
   .map(([k, v]) => `${k}: ${v}`)
   .join('\n')}
 
 CONTEXT:
-- isTicket: ${context.isTicket}
-- kpDone: ${context.kpDone || false}
-- awaitingIGN: ${context.awaitingIGN || false}
+- isTicket: ${ctx.isTicket}
+- kpDone: ${ctx.kpDone || false}
+- awaitingIGN: ${ctx.awaitingIGN || false}
 
-DECISION:
-- If reply is appropriate → respond professionally
-- If not → respond with EXACTLY "__IGNORE__"
+INSTRUCTIONS:
+- Decide if a reply is appropriate
+- If NO → respond with exactly: __IGNORE__
+- If you need to ask for IGN → respond with exactly: __ASK_IGN__
+- Otherwise respond normally, professionally
 `;
 }
 
-/* ================= AI CALL ================= */
-async function aiRespond(message, context) {
-  const res = await groq.chat.completions.create({
-    model: 'llama-3.1-8b-instant',
+/* ================= AI RESPONSE ================= */
+async function aiRespond(userMessage, context) {
+  const res = await openai.chat.completions.create({
+    model: 'gpt-4o-mini',
     temperature: 0.4,
     messages: [
-      { role: 'system', content: buildSystemPrompt(context) },
-      { role: 'user', content: message }
+      { role: 'system', content: systemPrompt(context) },
+      { role: 'user', content: userMessage }
     ]
   });
 
@@ -127,11 +129,11 @@ client.on('messageCreate', async (message) => {
   if (!inTicket && !mentioned) return;
 
   const channelId = message.channel.id;
-  const content = normalize(message.content);
+  const content = stripMentions(message.content);
 
   const state = ticketState.get(channelId) || {};
 
-  // Handle IGN capture (code-level)
+  /* ===== IGN CAPTURE (CODE ENFORCED) ===== */
   if (inTicket && state.awaitingIGN) {
     kpData[channelId] = { ign: content };
     fs.writeFileSync(KP_FILE, JSON.stringify(kpData, null, 2));
@@ -142,6 +144,7 @@ client.on('messageCreate', async (message) => {
     );
   }
 
+  /* ===== AI DECISION ===== */
   const aiReply = await aiRespond(content, {
     isTicket: inTicket,
     kpDone: state.kpDone,
@@ -150,8 +153,7 @@ client.on('messageCreate', async (message) => {
 
   if (aiReply === '__IGNORE__') return;
 
-  // Detect KP trigger from AI reply intent
-  if (aiReply.includes('__ASK_IGN__')) {
+  if (aiReply === '__ASK_IGN__') {
     ticketState.set(channelId, { awaitingIGN: true });
     return message.reply('Please provide your **Minecraft IGN** to proceed.');
   }

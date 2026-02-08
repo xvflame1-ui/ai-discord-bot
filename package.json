@@ -1,14 +1,14 @@
 {
   "name": "sm-hackers-ai-manager",
-  "version": "2.1.0",
-  "type": "module",
+  "version": "3.0.0",
+  "description": "SM HACKERS AI Community Manager",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
     "discord.js": "^14.15.3",
-    "dotenv": "^16.4.5",
     "openai": "^4.28.0"
   }
 }

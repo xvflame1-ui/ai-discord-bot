@@ -1,6 +1,6 @@
 {
   "name": "sm-hackers-ai-manager",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "type": "module",
   "main": "index.js",
   "scripts": {
@@ -9,6 +9,6 @@
   "dependencies": {
     "discord.js": "^14.15.3",
     "dotenv": "^16.4.5",
-    "groq-sdk": "^0.7.0"
+    "openai": "^4.28.0"
   }
 }

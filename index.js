@@ -1,169 +1,156 @@
-import 'dotenv/config';
-import fs from 'fs';
-import { Client, GatewayIntentBits } from 'discord.js';
-import OpenAI from 'openai';
+import { Client, GatewayIntentBits, Partials } from "discord.js";
+import OpenAI from "openai";
 
-/* ================= ENV ================= */
+// ===== ENV CHECK =====
 if (!process.env.DISCORD_TOKEN || !process.env.OPENAI_API_KEY) {
-  console.error('Missing DISCORD_TOKEN or OPENAI_API_KEY');
+  console.error("Missing DISCORD_TOKEN or OPENAI_API_KEY");
   process.exit(1);
 }
 
-/* ================= CLIENT ================= */
+// ===== CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.MessageContent
-  ]
+  ],
+  partials: [Partials.Channel]
 });
 
+// ===== OPENAI =====
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-/* ================= CONSTANTS ================= */
-const TICKET_PREFIX = 'ticket-';
-const KP_FILE = './known_polls.json';
+// ===== CONFIG =====
+const TICKET_PREFIX = "ticket";
+const TICKETS_CHANNEL_NAME = "🎟️tickets";
 
-/* ================= CLIENT CHANNELS ================= */
+// Client channel IDs
 const CLIENT_CHANNELS = {
-  saberproxy: '<#1458751684032331787>',
-  metroproxy: '<#1458751743205707779>',
-  luminaclient: '<#1458766462713073696>',
-  lumineproxy: '<#1458766504765165610>',
-  wclient: '<#1458766648608555029>',
-  lunarproxy: '<#1458769266001182721>',
-  horizonclient: '<#1458777115582533819>',
-  vortexclient: '<#1458777244913897595>',
-  boostclient: '<#1459180134895583333>',
-  toolbox: '<#1458751684032331787>, <#1458766462713073696>'
+  saberproxy: "<#1458751684032331787>",
+  metroproxy: "<#1458751743205707779>",
+  luminaclient: "<#1458766462713073696>",
+  lumineproxy: "<#1458766504765165610>",
+  wclient: "<#1458766648608555029>",
+  lunarproxy: "<#1458769266001182721>",
+  horion: "<#1458777115582533819>",
+  vortex: "<#1458777244913897595>",
+  boost: "<#1459180134895583333>"
 };
 
-/* ================= STORAGE ================= */
-if (!fs.existsSync(KP_FILE)) fs.writeFileSync(KP_FILE, JSON.stringify({}));
-const kpData = JSON.parse(fs.readFileSync(KP_FILE));
-const ticketState = new Map();
+// ===== SYSTEM PROMPT (THE BRAIN) =====
+const SYSTEM_PROMPT = `
+You are "SMH Manager", the official AI assistant of the SM HACKERS Discord community.
 
-/* ================= HELPERS ================= */
-const isTicket = (c) => c.name.startsWith(TICKET_PREFIX);
-const stripMentions = (t) => t.replace(/<@!?(\d+)>/g, '').trim();
+Community context:
+- SM HACKERS is a Minecraft hacking community
+- Focused on LBSM, 2B2T, and similar servers
+- Users discuss clients, proxies, clans, known polls, roles, and tools
 
-/* ================= SYSTEM PROMPT ================= */
-function systemPrompt(ctx) {
-  return `
-You are the official AI community manager of **SM HACKERS**.
+Core behavior rules (VERY IMPORTANT):
 
-SM HACKERS is a Minecraft hacking community (2b2t, LBSM, anarchy servers).
-Members are experienced. Do not act like tech support.
+1. You are professional, neutral, calm. Never cringe, never overfriendly.
+2. You understand slang, broken English, and casual messages.
+3. You ALWAYS understand context before responding.
+4. You NEVER argue with users.
+5. You NEVER expose internal logic or moderation decisions.
+6. You NEVER DM users.
 
-TONE:
-- Professional
-- Neutral
-- Direct
-- Calm
+Ticket logic:
+- If the channel name starts with "ticket", it IS a ticket.
+- Inside tickets:
+  - Reply WITHOUT mentioning the user.
+  - Respond to greetings ("hi", "hello") politely.
+  - Respond to thank you with "You're welcome."
+- Outside tickets:
+  - Only reply when mentioned.
+  - Redirect users to create a ticket if required.
 
-HARD RULES (never break):
-- Never DM users
-- Never approve or deny applications
-- Never discuss internal reviews or votes
-- Never argue
-- Never overexplain
-- Follow ticket-only rules strictly
+Known Polls:
+- Users must request Known Polls inside a ticket.
+- Ask ONLY for Minecraft IGN.
+- Once IGN is provided, confirm receipt.
+- Do not ask for server, proof, or extra info.
 
-KNOWN POLLS:
-- Ticket-only
-- Ask ONLY for Minecraft IGN
-- One IGN per ticket
-- After IGN: confirm added
+Clan registration:
+- Must be done in a ticket.
+- Ask for:
+  - Clan name
+  - Screenshot proof
+  - Discord server link
 
-YOUTUBE ROLE:
-- Ticket-only
-- Requirements:
-  • 100+ subscribers
-  • Channel link
-  • Proof of ownership
-- Do NOT assign roles
+YouTube role:
+- Must be requested in a ticket.
+- Requirement: 100+ subscribers
+- Ask for channel link and proof.
 
-CLIENT / TOOLBOX CHANNELS:
-${Object.entries(CLIENT_CHANNELS)
-  .map(([k, v]) => `${k}: ${v}`)
-  .join('\n')}
+Toolbox / clients:
+- If user asks about toolbox or proxies:
+  - Respond with the correct channel mentions.
+  - Saber Proxy → #saber-proxy
+  - Lumina Client → #lumina-client
+- Do NOT explain downloads or safety.
 
-CONTEXT:
-- isTicket: ${ctx.isTicket}
-- kpDone: ${ctx.kpDone || false}
-- awaitingIGN: ${ctx.awaitingIGN || false}
+Greetings:
+- If a conversation already started, do NOT re-greet.
+- Reply naturally.
 
-INSTRUCTIONS:
-- Decide if a reply is appropriate
-- If NO → respond with exactly: __IGNORE__
-- If you need to ask for IGN → respond with exactly: __ASK_IGN__
-- Otherwise respond normally, professionally
+If a message is irrelevant, spam, or unclear:
+- Respond briefly or ignore if appropriate.
+
+You decide when to respond.
+If no response is needed, reply with EXACTLY:
+NO_RESPONSE
 `;
-}
 
-/* ================= AI RESPONSE ================= */
-async function aiRespond(userMessage, context) {
-  const res = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    temperature: 0.4,
-    messages: [
-      { role: 'system', content: systemPrompt(context) },
-      { role: 'user', content: userMessage }
-    ]
-  });
-
-  return res.choices[0].message.content.trim();
-}
-
-/* ================= HANDLER ================= */
-client.on('messageCreate', async (message) => {
+// ===== MESSAGE HANDLER =====
+client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
-  if (!message.guild) return;
 
-  const inTicket = isTicket(message.channel);
-  const mentioned = message.mentions.has(client.user);
+  const channelName = message.channel.name || "";
+  const isTicket = channelName.startsWith(TICKET_PREFIX);
+  const isMentioned = message.mentions.has(client.user);
 
-  // HARD GATE
-  if (!inTicket && !mentioned) return;
+  // Outside tickets, ignore unless mentioned
+  if (!isTicket && !isMentioned) return;
 
-  const channelId = message.channel.id;
-  const content = stripMentions(message.content);
+  try {
+    const aiResponse = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: `
+Channel: ${channelName}
+IsTicket: ${isTicket}
+UserMessage: ${message.content}
+`
+        }
+      ]
+    });
 
-  const state = ticketState.get(channelId) || {};
+    const reply = aiResponse.choices[0].message.content.trim();
 
-  /* ===== IGN CAPTURE (CODE ENFORCED) ===== */
-  if (inTicket && state.awaitingIGN) {
-    kpData[channelId] = { ign: content };
-    fs.writeFileSync(KP_FILE, JSON.stringify(kpData, null, 2));
-    ticketState.set(channelId, { kpDone: true });
+    if (reply === "NO_RESPONSE") return;
 
-    return message.reply(
-      'Your IGN has been received.\nYou have been **added to the Known Polls list**.'
-    );
+    // Mention only outside tickets
+    const finalReply = isTicket
+      ? reply
+      : `<@${message.author.id}> ${reply}`;
+
+    await message.channel.send(finalReply);
+
+  } catch (err) {
+    console.error("AI Error:", err.message);
   }
-
-  /* ===== AI DECISION ===== */
-  const aiReply = await aiRespond(content, {
-    isTicket: inTicket,
-    kpDone: state.kpDone,
-    awaitingIGN: state.awaitingIGN
-  });
-
-  if (aiReply === '__IGNORE__') return;
-
-  if (aiReply === '__ASK_IGN__') {
-    ticketState.set(channelId, { awaitingIGN: true });
-    return message.reply('Please provide your **Minecraft IGN** to proceed.');
-  }
-
-  return message.reply(aiReply);
 });
 
-/* ================= READY ================= */
-client.once('ready', () => {
-  console.log(`SM HACKERS AI Manager online as ${client.user.tag}`);
+// ===== READY =====
+client.once("ready", () => {
+  console.log(`Logged in as ${client.user.tag}`);
 });
 
+// ===== LOGIN =====
 client.login(process.env.DISCORD_TOKEN);

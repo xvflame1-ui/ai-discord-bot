@@ -1,13 +1,26 @@
-import { Client, GatewayIntentBits, Partials } from "discord.js";
+// ==============================
+// SM HACKERS AI MANAGER
+// FINAL – ALWAYS REPLY VERSION
+// ==============================
+
+import {
+  Client,
+  GatewayIntentBits,
+  Partials
+} from "discord.js";
 import OpenAI from "openai";
 
-// ===== ENV CHECK =====
+// ==============================
+// ENV CHECK
+// ==============================
 if (!process.env.DISCORD_TOKEN || !process.env.OPENAI_API_KEY) {
   console.error("Missing DISCORD_TOKEN or OPENAI_API_KEY");
   process.exit(1);
 }
 
-// ===== CLIENT =====
+// ==============================
+// CLIENT SETUP
+// ==============================
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -17,16 +30,13 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-// ===== OPENAI =====
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-// ===== CONFIG =====
-const TICKET_PREFIX = "ticket";
-const TICKETS_CHANNEL_NAME = "🎟️tickets";
-
-// Client channel IDs
+// ==============================
+// SM HACKERS CONSTANT DATA
+// ==============================
 const CLIENT_CHANNELS = {
   saberproxy: "<#1458751684032331787>",
   metroproxy: "<#1458751743205707779>",
@@ -34,123 +44,148 @@ const CLIENT_CHANNELS = {
   lumineproxy: "<#1458766504765165610>",
   wclient: "<#1458766648608555029>",
   lunarproxy: "<#1458769266001182721>",
-  horion: "<#1458777115582533819>",
-  vortex: "<#1458777244913897595>",
-  boost: "<#1459180134895583333>"
+  horionclient: "<#1458777115582533819>",
+  vortexclient: "<#1458777244913897595>",
+  boostclient: "<#1459180134895583333>"
 };
 
-// ===== SYSTEM PROMPT (THE BRAIN) =====
+const TICKET_CHANNEL_KEYWORDS = ["ticket"];
+
+// ==============================
+// UTILS
+// ==============================
+function isTicketChannel(channel) {
+  if (!channel || !channel.name) return false;
+  const name = channel.name.toLowerCase();
+  return TICKET_CHANNEL_KEYWORDS.some(k => name.includes(k));
+}
+
+function extractClientMentions(text) {
+  const t = text.toLowerCase();
+  return Object.entries(CLIENT_CHANNELS)
+    .filter(([k]) => t.includes(k.replace("client", "").replace("proxy", "")))
+    .map(([_, v]) => v);
+}
+
+// ==============================
+// SYSTEM PROMPT (CRITICAL)
+// ==============================
 const SYSTEM_PROMPT = `
-You are "SMH Manager", the official AI assistant of the SM HACKERS Discord community.
+You are **SMH Manager**, the official AI assistant of the SM HACKERS Discord server.
 
-Community context:
-- SM HACKERS is a Minecraft hacking community
-- Focused on LBSM, 2B2T, and similar servers
-- Users discuss clients, proxies, clans, known polls, roles, and tools
+This server is a Minecraft hacking community for LBSM, 2B2T, and related servers.
 
-Core behavior rules (VERY IMPORTANT):
+YOU MUST ALWAYS REPLY.
+You are NOT allowed to stay silent.
 
-1. You are professional, neutral, calm. Never cringe, never overfriendly.
-2. You understand slang, broken English, and casual messages.
-3. You ALWAYS understand context before responding.
-4. You NEVER argue with users.
-5. You NEVER expose internal logic or moderation decisions.
-6. You NEVER DM users.
+GENERAL BEHAVIOR:
+- Professional, neutral, direct.
+- Never casual slang.
+- Never emojis unless necessary.
+- Never argue.
+- Never expose internal logic.
+- Never DM users.
+- Never accuse users.
 
-Ticket logic:
-- If the channel name starts with "ticket", it IS a ticket.
-- Inside tickets:
-  - Reply WITHOUT mentioning the user.
-  - Respond to greetings ("hi", "hello") politely.
-  - Respond to thank you with "You're welcome."
-- Outside tickets:
-  - Only reply when mentioned.
-  - Redirect users to create a ticket if required.
+TICKETS:
+- If message is in a ticket channel, reply WITHOUT mentioning the user.
+- If outside ticket channel, reply ONLY when mentioned.
+- For Known Polls, Clan Registration, Role Applications → tickets only.
+- If asked outside tickets, instruct: "Create a ticket at #🎟️tickets".
 
-Known Polls:
-- Users must request Known Polls inside a ticket.
+KNOWN POLLS:
 - Ask ONLY for Minecraft IGN.
-- Once IGN is provided, confirm receipt.
-- Do not ask for server, proof, or extra info.
+- One IGN per ticket.
+- After IGN is provided, confirm receipt.
+- Do NOT decide approval publicly.
 
-Clan registration:
-- Must be done in a ticket.
-- Ask for:
-  - Clan name
-  - Screenshot proof
-  - Discord server link
+CLAN REGISTRATION:
+- Requires: clan name, screenshot proof, Discord server link.
+- Ask clearly and step-by-step.
 
-YouTube role:
-- Must be requested in a ticket.
-- Requirement: 100+ subscribers
-- Ask for channel link and proof.
+YOUTUBE ROLE:
+- Requires: 100+ subs, channel link, proof of ownership.
+- If requirements met → confirm role added.
+- If not → explain clearly.
 
-Toolbox / clients:
-- If user asks about toolbox or proxies:
-  - Respond with the correct channel mentions.
-  - Saber Proxy → #saber-proxy
-  - Lumina Client → #lumina-client
-- Do NOT explain downloads or safety.
+CLIENT / TOOLBOX QUESTIONS:
+- If toolbox or clients asked, provide correct channel mentions.
+- Use channel IDs provided.
+- Do NOT say "I cannot help".
 
-Greetings:
-- If a conversation already started, do NOT re-greet.
-- Reply naturally.
+GREETINGS & THANKS:
+- Greetings → greet back.
+- Thank you → "You're welcome."
+- Do NOT repeat greetings unnecessarily, but ALWAYS acknowledge.
 
-If a message is irrelevant, spam, or unclear:
-- Respond briefly or ignore if appropriate.
-
-You decide when to respond.
-If no response is needed, reply with EXACTLY:
-NO_RESPONSE
+IMPORTANT:
+- You must understand context across messages.
+- You must never reply with placeholders.
+- You must NEVER say "Please clarify" unless absolutely necessary.
 `;
 
-// ===== MESSAGE HANDLER =====
+// ==============================
+// MESSAGE HANDLER
+// ==============================
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  const channelName = message.channel.name || "";
-  const isTicket = channelName.startsWith(TICKET_PREFIX);
-  const isMentioned = message.mentions.has(client.user);
+  const ticket = isTicketChannel(message.channel);
+  const mentioned = message.mentions.has(client.user);
 
-  // Outside tickets, ignore unless mentioned
-  if (!isTicket && !isMentioned) return;
+  // Outside ticket → must be mentioned
+  if (!ticket && !mentioned) return;
 
   try {
-    const aiResponse = await openai.chat.completions.create({
+    const clientMentions = extractClientMentions(message.content);
+
+    const userPrompt = `
+Channel Type: ${ticket ? "Ticket" : "Public"}
+User Message: "${message.content}"
+
+Client Channels Found:
+${clientMentions.length ? clientMentions.join(", ") : "None"}
+`;
+
+    const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: `
-Channel: ${channelName}
-IsTicket: ${isTicket}
-UserMessage: ${message.content}
-`
-        }
-      ]
+        { role: "user", content: userPrompt }
+      ],
+      temperature: 0.35
     });
 
-    const reply = aiResponse.choices[0].message.content.trim();
+    let reply = completion.choices[0].message.content.trim();
 
-    if (reply === "NO_RESPONSE") return;
+    // Inject client channels if relevant
+    if (clientMentions.length) {
+      reply += `\n\nRelevant channels:\n${clientMentions.join(", ")}`;
+    }
 
-    // Mention only outside tickets
-    const finalReply = isTicket
-      ? reply
-      : `<@${message.author.id}> ${reply}`;
+    // Mention logic
+    if (!ticket) {
+      reply = `<@${message.author.id}> ${reply}`;
+    }
 
-    await message.channel.send(finalReply);
+    await message.reply(reply);
 
   } catch (err) {
-    console.error("AI Error:", err.message);
+    console.error("AI ERROR:", err);
+    await message.reply(
+      ticket
+        ? "An internal error occurred. Please wait."
+        : `<@${message.author.id}> An internal error occurred.`
+    );
   }
 });
 
-// ===== READY =====
+// ==============================
+// READY
+// ==============================
 client.once("ready", () => {
   console.log(`Logged in as ${client.user.tag}`);
 });
 
-// ===== LOGIN =====
+// ==============================
 client.login(process.env.DISCORD_TOKEN);

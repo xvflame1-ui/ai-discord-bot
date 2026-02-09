@@ -1,11 +1,9 @@
 {
-  "name": "sm-hackers-ai-manager",
-  "version": "5.0.0",
+  "name": "sm-hackers-chat-ai",
+  "version": "1.0.0",
   "type": "module",
   "main": "index.js",
-  "scripts": {
-    "start": "node index.js"
-  },
+  "scripts": { "start": "node index.js" },
   "dependencies": {
     "discord.js": "^14.15.3",
     "openai": "^4.28.0"

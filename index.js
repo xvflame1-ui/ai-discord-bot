@@ -35,11 +35,11 @@ const CLIENT_CHANNELS = {
   toolbox: "<#1458751684032331787>, <#1458766462713073696>"
 };
 
-function isTicketChannel(channel) {
+function isTicket(channel) {
   return channel?.name?.toLowerCase().includes("ticket");
 }
 
-function findClientMentions(text) {
+function findClientChannels(text) {
   const t = text.toLowerCase();
   return Object.entries(CLIENT_CHANNELS)
     .filter(([k]) => t.includes(k.replace("client", "").replace("proxy", "")))
@@ -48,90 +48,73 @@ function findClientMentions(text) {
 
 /* ================= SYSTEM PROMPT ================= */
 const SYSTEM_PROMPT = `
-You are SMH Manager for the SM HACKERS Discord.
+You are SMH Manager, the official AI assistant of the SM HACKERS Discord.
 
-You must be:
-- Professional
-- Neutral
-- Direct
-- Concise
+Rules:
+- Professional, neutral, concise
+- Always reply
+- No rambling
+- No emojis
+- No filler
+- No moderation talk
+- No DMs
 
-STRICT RULES:
-- NEVER ramble
-- NEVER explain unless asked
-- NEVER roleplay
-- NEVER add filler sentences
-- Reply in ONE short paragraph maximum
-
-RESPONSE FORMAT (MANDATORY JSON):
-{
-  "reply": "string",
-  "confidence": "high|medium|low"
-}
-
-CONTENT RULES:
+Behavior:
 - Greetings → short greeting
 - Thanks → "You're welcome."
-- Casual chatter → brief acknowledgment
-- Actionable question → direct answer
-- Toolbox / clients → give channels
-- Tickets → no mentions
-- Outside tickets → mention user
+- Toolbox / clients → give channel mentions
+- Known Polls / Roles / Clans → ticket-only instructions
 `;
 
 /* ================= HANDLER ================= */
 client.on("messageCreate", async (message) => {
   if (message.author.bot) return;
 
-  const ticket = isTicketChannel(message.channel);
-  const clientMentions = findClientMentions(message.content);
+  const ticket = isTicket(message.channel);
+  const clientChannels = findClientChannels(message.content);
 
-  const userPrompt = `
-ChannelType: ${ticket ? "Ticket" : "Public"}
-Message: "${message.content}"
-DetectedClients: ${clientMentions.join(", ") || "None"}
-`;
+  let aiText = null;
 
   try {
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      temperature: 0,
-      max_tokens: 200,
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        { role: "user", content: userPrompt }
+    const response = await openai.responses.create({
+      model: "gpt-4.1-mini",
+      input: [
+        {
+          role: "system",
+          content: SYSTEM_PROMPT
+        },
+        {
+          role: "user",
+          content: `
+ChannelType: ${ticket ? "Ticket" : "Public"}
+Message: "${message.content}"
+`
+        }
       ]
     });
 
-    let raw = completion.choices[0].message.content.trim();
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch {
-      parsed = { reply: raw, confidence: "low" };
-    }
-
-    let replyText = parsed.reply;
-
-    if (clientMentions.length) {
-      replyText += `\n\nRelevant channels:\n${clientMentions.join(", ")}`;
-    }
-
-    if (!ticket) {
-      replyText = `<@${message.author.id}> ${replyText}`;
-    }
-
-    await message.reply(replyText);
+    aiText = response.output_text?.trim();
 
   } catch (err) {
-    console.error("ERROR:", err);
-    await message.reply(
-      ticket
-        ? "An error occurred. Please try again."
-        : `<@${message.author.id}> An error occurred.`
-    );
+    console.error("OPENAI ERROR:", err.message);
   }
+
+  // HARD FALLBACK (NEVER SILENT)
+  if (!aiText) {
+    aiText = ticket
+      ? "I’m here. Please state your request."
+      : "Please mention me with your request.";
+  }
+
+  if (clientChannels.length) {
+    aiText += `\n\nRelevant channels:\n${clientChannels.join(", ")}`;
+  }
+
+  if (!ticket) {
+    aiText = `<@${message.author.id}> ${aiText}`;
+  }
+
+  await message.reply(aiText);
 });
 
 /* ================= READY ================= */

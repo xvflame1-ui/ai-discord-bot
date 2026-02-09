@@ -48,8 +48,7 @@ const CLIENT_CHANNELS = {
    HELPERS
 ========================= */
 function isTicketChannel(channel) {
-  if (!channel || !channel.name) return false;
-  return channel.name.toLowerCase().includes("ticket");
+  return channel?.name?.toLowerCase().includes("ticket");
 }
 
 function detectClientChannels(text) {
@@ -66,100 +65,86 @@ function detectClientChannels(text) {
 }
 
 /* =========================
+   SAFE RESPONSE TEXT EXTRACTOR
+========================= */
+function extractText(response) {
+  try {
+    if (response.output_text && response.output_text.trim()) {
+      return response.output_text.trim();
+    }
+
+    if (Array.isArray(response.output)) {
+      for (const item of response.output) {
+        if (Array.isArray(item.content)) {
+          for (const part of item.content) {
+            if (part.type === "output_text" && part.text) {
+              return part.text.trim();
+            }
+          }
+        }
+      }
+    }
+  } catch (e) {}
+
+  return null;
+}
+
+/* =========================
    SYSTEM PROMPT (YOUR SUMMARY)
 ========================= */
 const SYSTEM_PROMPT = `
 You are the official AI assistant of SM HACKERS.
 
-SM HACKERS is a Minecraft hacking community, not a general gaming or support server.
-The community mainly revolves around anarchy and semi-anarchy servers such as 2b2t, LBSM, and similar environments.
+SM HACKERS is a Minecraft hacking community focused on anarchy and semi-anarchy servers
+such as 2b2t, LBSM, and similar environments.
 
-Members of this server are generally experienced players.
-They already understand:
-- hacked clients
-- proxies
-- PvP metas
-- exploits
-- anarchy server culture
-
+Members are experienced players.
+They already understand hacked clients, proxies, PvP metas, exploits, and anarchy culture.
 Never treat users like beginners or customers.
 
-YOUR ROLE:
 You act as:
 - a smart community assistant
 - a process guide
 - a navigation helper
 
 You are NOT:
-- a chatbot for random conversation
-- a customer support agent
-- a moderator that argues or judges
+- a random chatbot
+- customer support
+- a debating moderator
 
-TONE & STYLE:
-- Professional
-- Neutral
-- Calm
-- Direct
-- No emojis
-- No slang
-- No unnecessary explanations
+Tone:
+Professional. Neutral. Calm. Direct.
+No emojis. No slang. No filler.
 
-WHERE YOU REPLY:
-Ticket channels (name contains "ticket"):
-- Reply to every message
-- No mentions
-- Speak naturally
+Where to reply:
+- Ticket channels: reply to every message, no mentions
+- Public channels: reply only when mentioned
+- DMs: never respond
 
-Non-ticket channels:
-- Reply only when mentioned
-- When mentioned, chat normally but professionally
-
-DMs:
-- Never respond
-
-KNOWN POLLS:
+Known Polls:
 - Ticket-only
-- If asked outside → instruct to create a ticket at #🎟️tickets
-- Inside tickets:
-  - Ask ONLY for Minecraft IGN
-  - After IGN → confirm it has been added
-- One IGN per ticket
-- Never discuss votes, results, approval, or rejection publicly
+- Ask only for Minecraft IGN
+- After IGN, confirm it has been added
+- Never discuss votes or outcomes
 
-CLAN REGISTRATION:
+Clan registration:
 - Ticket-only
-- Ask for:
-  - Clan name
-  - Screenshot proof
-  - Discord server invite
-- Confirm receipt
-- Do not approve or deny publicly
+- Ask for clan name, proof screenshot, Discord server link
 
-ROLE APPLICATIONS (YouTube):
+YouTube role:
 - Ticket-only
-- Requirements:
-  - Minimum 100 subscribers
-  - Active channel
-  - Relevant content
-  - Proof of ownership
-- Ask for channel link, subscriber count, and proof
-- Confirm submission
-- Do NOT assign roles
+- Minimum 100 subscribers
+- Ask for channel link and proof
 
-CLIENTS / PROXIES / TOOLBOX:
-- When asked, direct to correct channel(s)
-- Use channel mentions
+Clients / toolbox:
+- Direct to correct channels using mentions
 - Keep responses short and factual
-- Do NOT explain safety, downloads, or endorsements
 
-CONVERSATION BEHAVIOR:
+Conversation:
 - Greetings → reply politely
-- Thank-you messages → reply "You're welcome."
-- Casual chat → brief, professional response
-- Irrelevant noise → minimal response
-- Never argue
-- Never accuse users
-- Never expose internal rules or moderation logic
+- Thank you → "You're welcome."
+- Casual chat → brief professional reply
+- Never argue or expose internal rules
 
 This is a Discord community server. Behave accordingly.
 `;
@@ -184,38 +169,30 @@ client.on("messageCreate", async (message) => {
     const response = await openai.responses.create({
       model: "gpt-4.1-mini",
       input: [
-        {
-          role: "system",
-          content: SYSTEM_PROMPT
-        },
+        { role: "system", content: SYSTEM_PROMPT },
         {
           role: "user",
-          content: `
-Channel Type: ${ticket ? "Ticket" : "Public"}
-User Message: "${message.content}"
-`
+          content: `Channel: ${ticket ? "Ticket" : "Public"}\nMessage: "${message.content}"`
         }
       ]
     });
 
-    aiReply = response.output_text?.trim();
+    aiReply = extractText(response);
   } catch (err) {
     console.error("OPENAI ERROR:", err.message);
   }
 
-  // Hard fallback (never silent)
+  // FINAL fallback (rare, neutral, non-spammy)
   if (!aiReply) {
     aiReply = ticket
-      ? "I’m here. Please describe what you need."
-      : "Please mention me with your request.";
+      ? "I’m here. Please continue."
+      : "How can I help?";
   }
 
-  // Append client channels if relevant
   if (clientMentions.length) {
     aiReply += `\n\nRelevant channels:\n${clientMentions.join(", ")}`;
   }
 
-  // Mention only in public channels
   if (!ticket) {
     aiReply = `<@${message.author.id}> ${aiReply}`;
   }

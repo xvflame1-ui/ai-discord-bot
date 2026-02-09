@@ -1,17 +1,13 @@
 import { Client, GatewayIntentBits, Partials } from "discord.js";
 import OpenAI from "openai";
 
-/* =========================
-   ENV CHECK
-========================= */
+/* ================= ENV ================= */
 if (!process.env.DISCORD_TOKEN || !process.env.OPENAI_API_KEY) {
-  console.error("ENV ERROR: Missing DISCORD_TOKEN or OPENAI_API_KEY");
+  console.error("Missing DISCORD_TOKEN or OPENAI_API_KEY");
   process.exit(1);
 }
 
-/* =========================
-   DISCORD CLIENT
-========================= */
+/* ================= CLIENT ================= */
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -21,16 +17,11 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-/* =========================
-   OPENAI CLIENT
-========================= */
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY
 });
 
-/* =========================
-   CONSTANT DATA
-========================= */
+/* ================= DATA ================= */
 const CLIENT_CHANNELS = {
   saberproxy: "<#1458751684032331787>",
   metroproxy: "<#1458751743205707779>",
@@ -44,130 +35,108 @@ const CLIENT_CHANNELS = {
   toolbox: "<#1458751684032331787>, <#1458766462713073696>"
 };
 
-/* =========================
-   HELPERS
-========================= */
 function isTicketChannel(channel) {
-  if (!channel || !channel.name) return false;
-  return channel.name.toLowerCase().includes("ticket");
+  return channel?.name?.toLowerCase().includes("ticket");
 }
 
-function extractClients(text) {
+function findClientMentions(text) {
   const t = text.toLowerCase();
-  const hits = [];
-  for (const [key, value] of Object.entries(CLIENT_CHANNELS)) {
-    if (t.includes(key.replace("client", "").replace("proxy", ""))) {
-      hits.push(value);
-    }
-  }
-  return hits;
+  return Object.entries(CLIENT_CHANNELS)
+    .filter(([k]) => t.includes(k.replace("client", "").replace("proxy", "")))
+    .map(([, v]) => v);
 }
 
-/* =========================
-   SYSTEM PROMPT (AI BRAIN)
-========================= */
+/* ================= SYSTEM PROMPT ================= */
 const SYSTEM_PROMPT = `
-You are SMH Manager, the official AI assistant of the SM HACKERS Discord server.
+You are SMH Manager for the SM HACKERS Discord.
 
-Context:
-- SM HACKERS is a Minecraft hacking community (2b2t, LBSM, anarchy servers).
-- Users are experienced; do not act like tech support.
+You must be:
+- Professional
+- Neutral
+- Direct
+- Concise
 
-Rules:
-- ALWAYS reply. Never stay silent.
-- Professional, neutral, direct.
-- Never DM users.
-- Never argue.
-- Never expose internal moderation logic.
+STRICT RULES:
+- NEVER ramble
+- NEVER explain unless asked
+- NEVER roleplay
+- NEVER add filler sentences
+- Reply in ONE short paragraph maximum
 
-Tickets:
-- If channel is a ticket, reply normally (no mentions).
-- Known Polls: ticket-only, ask ONLY for Minecraft IGN.
-- Clan registration: ticket-only, ask for clan name, proof, Discord server.
-- YouTube role: ticket-only, require 100+ subs, channel link, proof.
+RESPONSE FORMAT (MANDATORY JSON):
+{
+  "reply": "string",
+  "confidence": "high|medium|low"
+}
 
-Clients / Toolbox:
-- When asked, give correct channel mentions.
-
-Greetings:
-- Reply politely.
-Thanks:
-- Reply "You're welcome."
-
-You decide the wording, but MUST follow rules above.
+CONTENT RULES:
+- Greetings → short greeting
+- Thanks → "You're welcome."
+- Casual chatter → brief acknowledgment
+- Actionable question → direct answer
+- Toolbox / clients → give channels
+- Tickets → no mentions
+- Outside tickets → mention user
 `;
 
-/* =========================
-   MESSAGE HANDLER
-========================= */
+/* ================= HANDLER ================= */
 client.on("messageCreate", async (message) => {
-  try {
-    if (message.author.bot) return;
+  if (message.author.bot) return;
 
-    // HARD DEBUG – proves bot sees messages
-    console.log("MSG:", message.channel?.name, message.author.tag, message.content);
+  const ticket = isTicketChannel(message.channel);
+  const clientMentions = findClientMentions(message.content);
 
-    const ticket = isTicketChannel(message.channel);
-    const clientMentions = extractClients(message.content);
-
-    let userContext = `
-Channel: ${ticket ? "Ticket" : "Public"}
+  const userPrompt = `
+ChannelType: ${ticket ? "Ticket" : "Public"}
 Message: "${message.content}"
+DetectedClients: ${clientMentions.join(", ") || "None"}
 `;
 
-    if (clientMentions.length) {
-      userContext += `\nDetected client channels: ${clientMentions.join(", ")}`;
-    }
+  try {
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0,
+      max_tokens: 200,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt }
+      ]
+    });
 
-    let aiText = null;
+    let raw = completion.choices[0].message.content.trim();
 
+    let parsed;
     try {
-      const completion = await openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        temperature: 0.4,
-        messages: [
-          { role: "system", content: SYSTEM_PROMPT },
-          { role: "user", content: userContext }
-        ]
-      });
-
-      aiText = completion.choices[0].message.content.trim();
-      console.log("AI:", aiText);
-
-    } catch (aiErr) {
-      console.error("OPENAI ERROR:", aiErr.message);
+      parsed = JSON.parse(raw);
+    } catch {
+      parsed = { reply: raw, confidence: "low" };
     }
 
-    // Fallback if AI fails (IMPORTANT)
-    if (!aiText || aiText.length === 0) {
-      aiText = ticket
-        ? "I’m here. Please describe what you need."
-        : "I’m here. Please mention me with your request.";
-    }
+    let replyText = parsed.reply;
 
-    // Append client channels if relevant
     if (clientMentions.length) {
-      aiText += `\n\nRelevant channels:\n${clientMentions.join(", ")}`;
+      replyText += `\n\nRelevant channels:\n${clientMentions.join(", ")}`;
     }
 
-    await message.reply(aiText);
+    if (!ticket) {
+      replyText = `<@${message.author.id}> ${replyText}`;
+    }
+
+    await message.reply(replyText);
 
   } catch (err) {
-    console.error("MESSAGE HANDLER ERROR:", err);
-    try {
-      await message.reply("An internal error occurred. Please try again.");
-    } catch {}
+    console.error("ERROR:", err);
+    await message.reply(
+      ticket
+        ? "An error occurred. Please try again."
+        : `<@${message.author.id}> An error occurred.`
+    );
   }
 });
 
-/* =========================
-   READY
-========================= */
+/* ================= READY ================= */
 client.once("ready", () => {
   console.log(`BOT ONLINE: ${client.user.tag}`);
 });
 
-/* =========================
-   LOGIN
-========================= */
 client.login(process.env.DISCORD_TOKEN);
